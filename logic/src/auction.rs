@@ -22,7 +22,7 @@ use crate::vote::{MIN_VOTE_WEIGHT, Vote};
 /// Version of the game rules. Bumped only by a conscious change to the
 /// machine, the finale or the verdict rule; the canister reports it via
 /// query.
-pub const LOGIC_VERSION: u32 = 1;
+pub const LOGIC_VERSION: u32 = 2;
 
 /// All times are unix seconds; time is always an argument, never a syscall.
 /// Both KM handles — the bidding window and the performance window — share
@@ -103,6 +103,11 @@ pub enum Action {
     ReturnEntry { by: Actor, in_winner_lot: bool },
     /// The KM aborts the whole auction: cancel for every lot.
     KmCancel,
+    /// The operator kills running bidding altogether — the censorship move
+    /// against a stream of junk lots that per-lot returns would chase one
+    /// by one (game-spec §5). After the finale the operator kills an
+    /// auction by returning its winner instead.
+    OperatorCancel,
     /// The registry scan finished: a winner exists or not.
     Finale { winner: bool },
     /// The KM claims the winning condition performed; voting opens.
@@ -181,7 +186,9 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         (State::Bidding, Action::AcceptLot)
         | (State::Bidding, Action::ReturnLot)
         | (State::Bidding, Action::ReturnEntry { .. }) => None,
-        (State::Bidding, Action::KmCancel) => Some(State::Done { winner: None }),
+        (State::Bidding, Action::KmCancel) | (State::Bidding, Action::OperatorCancel) => {
+            Some(State::Done { winner: None })
+        }
 
         // --- the finale: the caller finished folding its registry --------
         (State::FinaleDue, Action::Finale { winner: true }) => Some(State::Performing),
@@ -239,6 +246,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         | (State::FinaleDue, Action::ReturnLot)
         | (State::FinaleDue, Action::ReturnEntry { .. })
         | (State::FinaleDue, Action::KmCancel)
+        | (State::FinaleDue, Action::OperatorCancel)
         | (State::FinaleDue, Action::Ready)
         | (State::FinaleDue, Action::KmReturnWinner)
         | (State::FinaleDue, Action::OperatorReturnWinner)
@@ -254,6 +262,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
             },
         )
         | (State::Performing, Action::KmCancel)
+        | (State::Performing, Action::OperatorCancel)
         | (State::Performing, Action::Finale { .. })
         | (State::Performing, Action::Vote(_))
         | (State::Voting { .. }, Action::Register { .. })
@@ -274,6 +283,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
             },
         )
         | (State::Voting { .. }, Action::KmCancel)
+        | (State::Voting { .. }, Action::OperatorCancel)
         | (State::Voting { .. }, Action::Finale { .. })
         | (State::Voting { .. }, Action::Ready)
         | (State::Voting { .. }, Action::KmReturnWinner)
@@ -282,6 +292,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         | (State::Done { .. }, Action::ReturnLot)
         | (State::Done { .. }, Action::ReturnEntry { .. })
         | (State::Done { .. }, Action::KmCancel)
+        | (State::Done { .. }, Action::OperatorCancel)
         | (State::Done { .. }, Action::Finale { .. })
         | (State::Done { .. }, Action::Ready)
         | (State::Done { .. }, Action::KmReturnWinner)
@@ -550,6 +561,25 @@ mod tests {
             step(&mut a, action, T0 + 1).unwrap();
             assert_eq!(a.state, State::Bidding);
         }
+    }
+
+    #[test]
+    fn operator_cancel_kills_the_whole_auction_from_bidding_only() {
+        // The operator's whole-auction door mirrors the KM's: bidding only.
+        let mut a = auction();
+        step(&mut a, Action::OperatorCancel, T0 + 1).unwrap();
+        assert_eq!(a.state, State::Done { winner: None });
+
+        let mut a = performing();
+        assert_eq!(
+            step(&mut a, Action::OperatorCancel, BIDDING_END + 2),
+            Err(StepError::InvalidTransition)
+        );
+        let mut a = voting();
+        assert_eq!(
+            step(&mut a, Action::OperatorCancel, BIDDING_END + 2),
+            Err(StepError::InvalidTransition)
+        );
     }
 
     #[test]
@@ -881,6 +911,7 @@ mod tests {
                     Just(ActionKind::ReturnLot),
                     Just(ActionKind::ReturnEntry),
                     Just(ActionKind::KmCancel),
+                    Just(ActionKind::OperatorCancel),
                     Just(ActionKind::Finale),
                     Just(ActionKind::Ready),
                     Just(ActionKind::KmReturnWinner),
@@ -910,6 +941,7 @@ mod tests {
                             in_winner_lot: flag_b,
                         },
                         ActionKind::KmCancel => Action::KmCancel,
+                        ActionKind::OperatorCancel => Action::OperatorCancel,
                         ActionKind::Finale => Action::Finale { winner: flag_b },
                         ActionKind::Ready => Action::Ready,
                         ActionKind::KmReturnWinner => Action::KmReturnWinner,
@@ -937,6 +969,7 @@ mod tests {
         ReturnLot,
         ReturnEntry,
         KmCancel,
+        OperatorCancel,
         Finale,
         Ready,
         KmReturnWinner,
@@ -961,7 +994,8 @@ mod tests {
                     | (State::Bidding, Action::AcceptLot)
                     | (State::Bidding, Action::ReturnLot)
                     | (State::Bidding, Action::ReturnEntry { .. })
-                    | (State::Bidding, Action::KmCancel) => now < BIDDING_END,
+                    | (State::Bidding, Action::KmCancel)
+                    | (State::Bidding, Action::OperatorCancel) => now < BIDDING_END,
                     (State::FinaleDue, Action::Finale { .. }) => true,
                     // Time first: a Finale arriving after expiry lands in
                     // the FINALE_DUE the clock just entered.
@@ -1062,6 +1096,6 @@ mod tests {
 
     #[test]
     fn logic_version_is_pinned() {
-        assert_eq!(LOGIC_VERSION, 1);
+        assert_eq!(LOGIC_VERSION, 2);
     }
 }

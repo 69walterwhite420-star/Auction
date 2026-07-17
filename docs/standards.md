@@ -11,7 +11,7 @@
 | Канистра не двигает деньги | нет переводов, нет знания о сплиттере и казне | `grep -riE 'transfer\|approve\|splitter\|treasury' canister/src/` пусто |
 | Чтение внешнего мира — ровно одно | `getAccountInfo` через SOL RPC-канистру из конфига | `grep -r 'http_request' canister/src/` пусто; внешние вызовы только к management canister, `crown_index` и SOL RPC-канистре из конфига |
 | Mainnet без своих источников | `Default:*` в mainnet-профиле | линт профилей: `Custom` в `config/mainnet.toml` роняет сборку |
-| Update-поверхность фиксирована | двенадцать методов | парсер `.did` падает на update вне `{create_auction, get_resolver, register_entry, accept_lot, return_lot, return_entry, cancel_auction, ready, vote, operator_refund_lot, operator_refund_entry, request_signature}` |
+| Update-поверхность фиксирована | тринадцать методов | парсер `.did` падает на update вне `{create_auction, get_resolver, register_entry, accept_lot, return_lot, return_entry, cancel_auction, ready, vote, operator_refund_lot, operator_refund_entry, operator_cancel_auction, request_signature}` |
 | Авторизация не по principal | подпись кошелька; `get_resolver`, `register_entry`, `request_signature` бесправны | `grep -r 'caller' canister/src/` пусто |
 | Ядро и фабрика не тронуты | отдельный репозиторий | CI падает, если в репозитории есть путь `crown-core/` или `crown-factory/`; e2e требует пустой `git diff` в обоих |
 

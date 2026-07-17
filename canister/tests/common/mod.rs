@@ -581,6 +581,31 @@ pub fn operator_refund_entry(
     result
 }
 
+pub fn operator_cancel_auction(
+    s: &Setup,
+    auction_id: &[u8],
+    signer: &Wallet,
+) -> Result<(), String> {
+    let message = auth::auction_message(
+        CHAIN,
+        &s.game.to_text(),
+        auction_id,
+        &auth::Action::OperatorCancel,
+    );
+    let arg = AuctionActionArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        signature: ByteBuf::from(sign(signer, message.as_bytes())),
+    };
+    let (result,): (Result<(), String>,) = update(
+        &s.pic,
+        s.game,
+        "operator_cancel_auction",
+        Encode!(&arg).unwrap(),
+    );
+    result
+}
+
 pub fn request_signature(
     s: &Setup,
     auction_id: &[u8],

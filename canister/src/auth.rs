@@ -72,6 +72,7 @@ pub enum Action {
     OperatorRefundEntry {
         escrow: Vec<u8>,
     },
+    OperatorCancel,
 }
 
 impl Action {
@@ -87,6 +88,7 @@ impl Action {
             Action::Vote(_) => "vote",
             Action::OperatorRefundLot { .. } => "operator-refund-lot",
             Action::OperatorRefundEntry { .. } => "operator-refund-entry",
+            Action::OperatorCancel => "operator-cancel",
         }
     }
 }
@@ -138,7 +140,7 @@ pub fn spec_of(chain: &str) -> Result<&'static ChainSpec, AuthError> {
 /// line (the id derives from its `km_nonce:`). `accept`, `return-lot` and
 /// `operator-refund-lot` add `lot:` (hex); `return-entry` and
 /// `operator-refund-entry` add `escrow:` (base58); `vote` adds `choice:`;
-/// `cancel` and `ready` add nothing.
+/// `cancel`, `ready` and `operator-cancel` add nothing.
 ///
 /// The encoding is injective — two different messages cannot render to the
 /// same text — because the keys are fixed and ordered, the action decides
@@ -180,7 +182,7 @@ pub fn auction_message(
             out.push_str(&format!("escrow: {}\n", bs58::encode(escrow).into_string()));
         }
         Action::Vote(choice) => out.push_str(&format!("choice: {}\n", choice.word())),
-        Action::Cancel | Action::Ready => {}
+        Action::Cancel | Action::Ready | Action::OperatorCancel => {}
     }
     out
 }
@@ -566,6 +568,16 @@ mod tests {
                 bs58::encode(&escrow).into_string()
             )
         );
+        assert_eq!(
+            auction_message("solana-devnet", CANISTER, &AUCTION, &Action::OperatorCancel),
+            format!(
+                "crown:auction:v1\n\
+                 action: operator-cancel\n\
+                 chain: solana-devnet\n\
+                 canister: {CANISTER}\n\
+                 auction: {AUCTION_HEX}\n"
+            )
+        );
     }
 
     /// The whole point: a wallet must be able to show this to a human.
@@ -687,6 +699,7 @@ mod tests {
                     escrow: vec![0x11; 32],
                 },
             ),
+            auction_message("solana-devnet", CANISTER, &AUCTION, &Action::OperatorCancel),
         ];
         let count = messages.len();
         let seen: std::collections::BTreeSet<String> = messages.into_iter().collect();

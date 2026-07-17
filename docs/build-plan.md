@@ -34,7 +34,7 @@
 2. `grep -rE 'ic_cdk|std::(fs|net|time)|reqwest' logic/src/` → пусто.
 3. `grep -riE 'solana|ed25519|sha256|candid' logic/src/` → пусто. Логика не знает про чейн и криптографию.
 4. `grep -riE 'transfer|approve|splitter|treasury' canister/src/` → пусто; `grep -r 'http_request' canister/src/` → пусто. Канистра не двигает деньги; чтение чейна — только вызов SOL RPC-канистры из конфига, не outcalls.
-5. Парсер `.did`: update-методы ⊆ `{create_auction, get_resolver, register_entry, accept_lot, return_lot, return_entry, cancel_auction, ready, vote, operator_refund_lot, operator_refund_entry, request_signature}`. Любой сверх списка роняет CI; полный список обязателен к G3.
+5. Парсер `.did`: update-методы ⊆ `{create_auction, get_resolver, register_entry, accept_lot, return_lot, return_entry, cancel_auction, ready, vote, operator_refund_lot, operator_refund_entry, operator_cancel_auction, request_signature}`. Любой сверх списка роняет CI; полный список обязателен к G3.
 6. `grep -r 'caller' canister/src/` → пусто. Авторизация — подпись кошелька, не principal.
 7. Линт профилей: mainnet-профиль, содержащий `Custom`, роняет сборку (правило ядра, core-spec §8).
 
@@ -84,7 +84,7 @@
 
 **Вход.** game-spec §5, §8, §9, §10, §13.
 
-**Выход.** Таймеры (конец торгов, срок выполнения, конец голосования) с порционной обработкой и добором (урок «Сбора»); финал — победитель из `logic`, вердикты; `ready`, `vote` (вес из `crown-index` — мок-канистра), `operator_refund_lot` / `operator_refund_entry`; `request_signature` с трёхступенчатым разрешением исхода и подписью `sign_with_schnorr([lot_id])`, локальная верификация против резолвера лота. Вердикт пишется в стабильную память **до** первой подписи — порядок закреплён тестом.
+**Выход.** Таймеры (конец торгов, срок выполнения, конец голосования) с порционной обработкой и добором (урок «Сбора»); финал — победитель из `logic`, вердикты; `ready`, `vote` (вес из `crown-index` — мок-канистра), `operator_refund_lot` / `operator_refund_entry` / `operator_cancel_auction`; `request_signature` с трёхступенчатым разрешением исхода и подписью `sign_with_schnorr([lot_id])`, локальная верификация против резолвера лота. Вердикт пишется в стабильную память **до** первой подписи — порядок закреплён тестом.
 
 **DoD.**
 - message вердикта побайтово равен `DOMAIN ‖ program_id ‖ escrow ‖ outcome` — пиннуто на вектор.

@@ -35,7 +35,7 @@ if grep -rn 'http_request' canister/src/; then
 fi
 
 # 5. the update surface is frozen: every non-query .did method is allowlisted.
-allow='create_auction|get_resolver|register_entry|accept_lot|return_lot|return_entry|cancel_auction|ready|vote|operator_refund_lot|operator_refund_entry|request_signature'
+allow='create_auction|get_resolver|register_entry|accept_lot|return_lot|return_entry|cancel_auction|ready|vote|operator_refund_lot|operator_refund_entry|operator_cancel_auction|request_signature'
 if grep '\->' canister/auction.did | grep -v 'service :' | grep -v 'query' \
     | grep -vE "^[[:space:]]*($allow)[[:space:]]*:"; then
     echo "FAIL: update method outside the allowlist in auction.did" >&2

@@ -220,8 +220,9 @@ pub struct AuctionRecord {
     /// The winning lot, set by the finale (G3); `None` before it and in
     /// auctions that never had a winner.
     pub winner_lot: Option<serde_bytes::ByteBuf>,
-    /// Set exactly when the winner was returned by the platform operator —
-    /// the censorship move at auction level, attributed forever.
+    /// Set exactly when the platform operator killed the auction — by
+    /// cancelling running bidding or by returning the winner. The
+    /// censorship move at auction level, attributed forever.
     pub operator_returned_at: Option<u64>,
 }
 

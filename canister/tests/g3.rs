@@ -502,3 +502,51 @@ fn signatures_wait_for_verdicts_and_cover_unknown_lots() {
         "a lot's verdict must not verify under another lot's resolver"
     );
 }
+
+#[test]
+#[ignore]
+fn operator_cancels_running_bidding_altogether() {
+    let s = setup();
+    let km = wallet(0x10);
+    let stranger = wallet(0x66);
+
+    let auction_id = create_auction(&s, &km, 1).expect("create");
+    let deadline = good_deadline(created_at(&s, &auction_id));
+    let bid = plant_bid(&s, &auction_id, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_bid(&s, &auction_id, &bid).expect("register");
+    accept_lot(&s, &auction_id, bid.lot_id, &km).expect("accept");
+
+    assert_eq!(
+        operator_cancel_auction(&s, &auction_id, &stranger).unwrap_err(),
+        "bad signature"
+    );
+    operator_cancel_auction(&s, &auction_id, &operator()).expect("operator cancels");
+    let record = auction_state(&fetch_auction(&s, &auction_id));
+    assert_eq!(record.state, StateView::Done { winner: None });
+    assert!(record.operator_returned_at.is_some(), "attributed forever");
+
+    // The dead auction takes nothing and every lot resolves to cancel —
+    // the registered one and one the registry never heard of alike.
+    let late = plant_bid(&s, &auction_id, &km, 0x22, TEXT_B, 500_000, deadline, 2);
+    assert_eq!(
+        register_bid(&s, &auction_id, &late).unwrap_err(),
+        "invalid transition"
+    );
+    let verdict = request_signature(&s, &auction_id, &bid).expect("cancel signs");
+    assert_eq!(verdict.outcome, OutcomeView::Cancel);
+    verify_verdict(&bid.resolver, &bid.escrow, 1, &verdict.signature);
+    let ghost = request_signature(&s, &auction_id, &late).expect("ghost lot cancel signs");
+    assert_eq!(ghost.outcome, OutcomeView::Cancel);
+    assert_eq!(
+        operator_cancel_auction(&s, &auction_id, &operator()).unwrap_err(),
+        "invalid transition"
+    );
+
+    // After the finale the whole-auction door is closed: the operator kills
+    // an auction by returning its winner instead.
+    let (auction_b, _, _) = performing(&s, &km, 2);
+    assert_eq!(
+        operator_cancel_auction(&s, &auction_b, &operator()).unwrap_err(),
+        "invalid transition"
+    );
+}

@@ -578,6 +578,43 @@ fn cancel_auction(arg: AuctionActionArg) -> Result<(), String> {
     )
 }
 
+/// The platform operator kills running bidding altogether — the censorship
+/// move against a stream of junk lots that per-lot returns would chase one
+/// by one (docs/game-spec.md §5, §13). BIDDING only: after the finale the
+/// operator kills an auction by returning its winner. Every lot, known and
+/// never registered alike, resolves to cancel by the auction rule.
+/// Attributed forever.
+#[ic_cdk::update]
+fn operator_cancel_auction(arg: AuctionActionArg) -> Result<(), String> {
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+
+    let operator = crate::operator_wallet().ok_or("no operator wallet configured")?;
+    let message = auth::auction_message(
+        &arg.chain,
+        &canister_text(),
+        &arg.auction_id,
+        &auth::Action::OperatorCancel,
+    );
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &operator)
+        .map_err(|e| e.text().to_string())?;
+
+    // Manual step: the attribution must land in the same certified write as
+    // the state change.
+    let now = crate::now_seconds();
+    let before = record.clone();
+    let mut auction = record.to_logic();
+    let result = logic::step(&mut auction, logic::Action::OperatorCancel, now);
+    record.absorb(&auction);
+    if result.is_ok() {
+        record.operator_returned_at = Some(now);
+    }
+    if record != before {
+        crate::save_auction(&akey, &record);
+    }
+    result.map_err(step_error_text)
+}
+
 /// The KM claims the winning condition performed: PERFORMING → VOTING, the
 /// work goes to the community's judgment and the KM's return door closes
 /// (docs/game-spec.md §5).
