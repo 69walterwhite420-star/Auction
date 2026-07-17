@@ -1,0 +1,4 @@
+target/
+.dfx/
+config/local.toml
+logic/proptest-regressions/

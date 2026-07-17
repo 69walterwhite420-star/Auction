@@ -1,0 +1,12 @@
+# Аукцион — mainnet profile.
+#
+# Те же ключи, что в testnet.toml (docs/game-spec.md §11).
+#
+# Заполняется на G5: solana-mainnet из mainnet-профилей ядра и фабрики,
+# principal боевого crown-index, только Default-источники SOL RPC (линт
+# роняет сборку на Custom). До готовности платформы здесь только ключи.
+
+threshold_key = "key_1"
+voting_period = 3600
+# operator_wallet — боевой кошелёк оператора, пиннится на G5 вместе с
+# остальным; пустой профиль означает «операторского возврата нет».

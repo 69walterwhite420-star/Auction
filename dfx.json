@@ -1,0 +1,9 @@
+{
+  "canisters": {
+    "auction": {
+      "type": "rust",
+      "package": "auction",
+      "candid": "canister/auction.did"
+    }
+  }
+}

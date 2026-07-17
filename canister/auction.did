@@ -1,0 +1,4 @@
+// Frozen update surface (docs/game-spec.md §6); the allowlist lint in
+// scripts/lint-boundaries.sh rejects any update method beyond it. Methods
+// appear as their stages land (G2–G3).
+service : {}
