@@ -4,6 +4,18 @@
       "type": "rust",
       "package": "auction",
       "candid": "canister/auction.did"
+    },
+    "crown-index": {
+      "type": "custom",
+      "wasm": "../../Crown-Core/target/wasm32-unknown-unknown/release/crown_index.wasm",
+      "candid": "../../Crown-Core/index/crown-index.did",
+      "build": []
+    },
+    "sol_rpc": {
+      "type": "custom",
+      "candid": "https://github.com/dfinity/sol-rpc-canister/releases/download/sol_rpc_canister-v1.3.0/sol_rpc_canister.did",
+      "wasm": "https://github.com/dfinity/sol-rpc-canister/releases/download/sol_rpc_canister-v1.3.0/sol_rpc_canister.wasm.gz",
+      "init_arg": "( record {} )"
     }
   }
 }
