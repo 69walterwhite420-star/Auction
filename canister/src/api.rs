@@ -314,9 +314,15 @@ fn accept_lot(arg: LotActionArg) -> Result<(), String> {
     Ok(())
 }
 
+/// True when the lot is the recorded winner of the auction.
+fn is_winner(record: &crate::AuctionRecord, lot_id: &[u8]) -> bool {
+    record.winner_lot.as_ref().map(|w| w.as_slice()) == Some(lot_id)
+}
+
 /// The KM returns a whole lot: cancel for every entry it has and will ever
-/// derive, and no further registrations (docs/game-spec.md §5). BIDDING
-/// only — the winner goes through its own doors (G3).
+/// derive, and no further registrations (docs/game-spec.md §5). In BIDDING
+/// any lot; after the finale only the winner, until "ready" — returning it
+/// kills the auction unsettled, there is no second place.
 #[ic_cdk::update]
 fn return_lot(arg: LotActionArg) -> Result<(), String> {
     let akey = crate::auction_key(&arg.chain, &arg.auction_id);
@@ -337,7 +343,12 @@ fn return_lot(arg: LotActionArg) -> Result<(), String> {
         .map_err(|e| e.text().to_string())?;
 
     let now = crate::now_seconds();
-    step_and_save(&akey, &mut record, logic::Action::ReturnLot, now)?;
+    let action = if is_winner(&record, &lot) {
+        logic::Action::KmReturnWinner
+    } else {
+        logic::Action::ReturnLot
+    };
+    step_and_save(&akey, &mut record, action, now)?;
 
     let lkey = crate::lot_key(&arg.chain, &arg.auction_id, &lot);
     let mut lot = crate::load_lot(&lkey).ok_or_else(|| "unknown lot".to_string())?;
@@ -347,6 +358,65 @@ fn return_lot(arg: LotActionArg) -> Result<(), String> {
     lot.returned = Some(crate::ReturnStamp {
         at: now,
         by: crate::ActorView::Km,
+    });
+    crate::save_lot(&lkey, &lot);
+    Ok(())
+}
+
+/// The platform operator returns a whole lot — the censorship move
+/// (docs/game-spec.md §13). In BIDDING any lot; after the finale only the
+/// winner, from PERFORMING and VOTING alike; a decided lot is out of reach.
+/// The only direction is the bidders' own money back; settle has no such
+/// door. Attributed forever.
+#[ic_cdk::update]
+fn operator_refund_lot(arg: LotActionArg) -> Result<(), String> {
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+    let lot: [u8; 32] = arg
+        .lot_id
+        .to_vec()
+        .try_into()
+        .map_err(|_| "bad field length")?;
+
+    let operator = crate::operator_wallet().ok_or("no operator wallet configured")?;
+    let message = auth::auction_message(
+        &arg.chain,
+        &canister_text(),
+        &arg.auction_id,
+        &auth::Action::OperatorRefundLot { lot },
+    );
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &operator)
+        .map_err(|e| e.text().to_string())?;
+
+    let now = crate::now_seconds();
+    let winner = is_winner(&record, &lot);
+    let action = if winner {
+        logic::Action::OperatorReturnWinner
+    } else {
+        logic::Action::ReturnLot
+    };
+    // Manual step: the auction-level attribution must land in the same
+    // certified write as the state change.
+    let before = record.clone();
+    let mut auction = record.to_logic();
+    let result = logic::step(&mut auction, action, now);
+    record.absorb(&auction);
+    if result.is_ok() && winner {
+        record.operator_returned_at = Some(now);
+    }
+    if record != before {
+        crate::save_auction(&akey, &record);
+    }
+    result.map_err(step_error_text)?;
+
+    let lkey = crate::lot_key(&arg.chain, &arg.auction_id, &lot);
+    let mut lot = crate::load_lot(&lkey).ok_or_else(|| "unknown lot".to_string())?;
+    if lot.returned.is_some() {
+        return Err("lot already returned".to_string());
+    }
+    lot.returned = Some(crate::ReturnStamp {
+        at: now,
+        by: crate::ActorView::Operator,
     });
     crate::save_lot(&lkey, &lot);
     Ok(())
@@ -417,6 +487,65 @@ fn return_entry(arg: EntryActionArg) -> Result<(), String> {
     Ok(())
 }
 
+/// The platform operator returns one entry (docs/game-spec.md §13): its
+/// escrow gets cancel, the lot stays in the race with the rest. Available
+/// wherever the machine draws it — any lot in BIDDING, the winner's entries
+/// through PERFORMING and VOTING.
+#[ic_cdk::update]
+fn operator_refund_entry(arg: EntryActionArg) -> Result<(), String> {
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+
+    let operator = crate::operator_wallet().ok_or("no operator wallet configured")?;
+    let message = auth::auction_message(
+        &arg.chain,
+        &canister_text(),
+        &arg.auction_id,
+        &auth::Action::OperatorRefundEntry {
+            escrow: arg.escrow.to_vec(),
+        },
+    );
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &operator)
+        .map_err(|e| e.text().to_string())?;
+
+    let lot_id = crate::lot_of_entry(&arg.chain, &arg.auction_id, &arg.escrow)
+        .ok_or_else(|| "unknown entry".to_string())?;
+    let in_winner_lot = is_winner(&record, &lot_id);
+
+    let now = crate::now_seconds();
+    step_and_save(
+        &akey,
+        &mut record,
+        logic::Action::ReturnEntry {
+            by: logic::Actor::Operator,
+            in_winner_lot,
+        },
+        now,
+    )?;
+
+    let lkey = crate::lot_key(&arg.chain, &arg.auction_id, &lot_id);
+    let mut lot = crate::load_lot(&lkey).ok_or_else(|| "unknown lot".to_string())?;
+    if lot.returned.is_some() {
+        return Err("lot already returned".to_string());
+    }
+    let ekey = crate::entry_key(&arg.chain, &arg.auction_id, &lot_id, &arg.escrow);
+    let mut entry = crate::load_entry(&ekey).ok_or_else(|| "unknown entry".to_string())?;
+    if entry.returned.is_some() {
+        return Err("entry already returned".to_string());
+    }
+    entry.returned = Some(crate::ReturnStamp {
+        at: now,
+        by: crate::ActorView::Operator,
+    });
+    lot.sum = lot
+        .sum
+        .checked_sub(u128::from(entry.gross))
+        .ok_or("lot sum underflow")?;
+    crate::save_entry(&ekey, &entry);
+    crate::save_lot(&lkey, &lot);
+    Ok(())
+}
+
 #[derive(CandidType, Deserialize)]
 pub struct AuctionActionArg {
     pub chain: String,
@@ -447,6 +576,227 @@ fn cancel_auction(arg: AuctionActionArg) -> Result<(), String> {
         logic::Action::KmCancel,
         crate::now_seconds(),
     )
+}
+
+/// The KM claims the winning condition performed: PERFORMING → VOTING, the
+/// work goes to the community's judgment and the KM's return door closes
+/// (docs/game-spec.md §5).
+#[ic_cdk::update]
+fn ready(arg: AuctionActionArg) -> Result<(), String> {
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+
+    let message = auth::auction_message(
+        &arg.chain,
+        &canister_text(),
+        &arg.auction_id,
+        &auth::Action::Ready,
+    );
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
+        .map_err(|e| e.text().to_string())?;
+
+    step_and_save(
+        &akey,
+        &mut record,
+        logic::Action::Ready,
+        crate::now_seconds(),
+    )
+}
+
+#[derive(CandidType, Deserialize)]
+pub struct VoteArg {
+    pub chain: String,
+    pub auction_id: ByteBuf,
+    pub voter: ByteBuf,
+    pub choice: crate::ChoiceView,
+    pub signature: ByteBuf,
+}
+
+/// One vote on the winner (docs/game-spec.md §10). Order: signature, time,
+/// dedup, then the paid weight call; the machine revalidates everything
+/// after the await — the voting window may have closed while the book was
+/// answering.
+#[ic_cdk::update]
+async fn vote(arg: VoteArg) -> Result<(), String> {
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+
+    // Authorize before touching state: a bogus signature must never cost a
+    // certified write.
+    let choice = match arg.choice {
+        crate::ChoiceView::Done => auth::Choice::Done,
+        crate::ChoiceView::NotDone => auth::Choice::NotDone,
+    };
+    let message = auth::auction_message(
+        &arg.chain,
+        &canister_text(),
+        &arg.auction_id,
+        &auth::Action::Vote(choice),
+    );
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &arg.voter)
+        .map_err(|e| e.text().to_string())?;
+
+    // Time first, persisted (step_and_save writes only real transitions).
+    step_and_save(
+        &akey,
+        &mut record,
+        logic::Action::Tick,
+        crate::now_seconds(),
+    )?;
+    if !matches!(record.state, crate::StateView::Voting { .. }) {
+        return Err("invalid transition".to_string());
+    }
+
+    // Dedup before paying for the book call; the machine dedups again after.
+    if record.votes.iter().any(|vote| vote.voter == arg.voter) {
+        return Err("duplicate voter".to_string());
+    }
+
+    let weight = crate::weight::book_value(&arg.chain, &arg.voter, &record.km).await?;
+
+    // The await yielded: reload the truth and let the machine judge.
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+    step_and_save(
+        &akey,
+        &mut record,
+        logic::Action::Vote(logic::Vote {
+            voter: logic::Voter(arg.voter.to_vec()),
+            choice: match arg.choice {
+                crate::ChoiceView::Done => logic::Choice::Done,
+                crate::ChoiceView::NotDone => logic::Choice::NotDone,
+            },
+            weight,
+        }),
+        crate::now_seconds(),
+    )
+}
+
+#[derive(CandidType, Deserialize)]
+pub struct RequestSignatureArg {
+    pub chain: String,
+    pub auction_id: ByteBuf,
+    pub text_hash: ByteBuf,
+    pub donor: ByteBuf,
+    pub gross: u64,
+    pub deadline: u64,
+    pub nonce: u64,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+pub struct SignedVerdict {
+    pub escrow: ByteBuf,
+    pub outcome: crate::OutcomeView,
+    pub signature: ByteBuf,
+}
+
+/// The three-step outcome of one escrow (game-spec §8): its own return →
+/// its lot's return → the auction rule. A lot the registry never heard of
+/// resolves by the auction rule alone: unregistered means unaccepted means
+/// lost.
+fn resolve_outcome(
+    record: &crate::AuctionRecord,
+    lot: &Option<crate::LotRecord>,
+    entry: &Option<crate::EntryRecord>,
+    lot_id: &[u8],
+) -> Result<crate::OutcomeView, String> {
+    if let Some(entry) = entry
+        && entry.returned.is_some()
+    {
+        return Ok(crate::OutcomeView::Cancel);
+    }
+    if let Some(lot) = lot
+        && lot.returned.is_some()
+    {
+        return Ok(crate::OutcomeView::Cancel);
+    }
+    let winner = is_winner(record, lot_id);
+    match record.state {
+        crate::StateView::Done { winner: outcome } => {
+            if winner {
+                outcome.ok_or_else(|| "no verdict yet".to_string())
+            } else {
+                Ok(crate::OutcomeView::Cancel)
+            }
+        }
+        // Losers are freed the moment the finale stands (game-spec §5);
+        // the winner waits for its own verdict.
+        crate::StateView::Performing | crate::StateView::Voting { .. } => {
+            if winner {
+                Err("no verdict yet".to_string())
+            } else {
+                Ok(crate::OutcomeView::Cancel)
+            }
+        }
+        crate::StateView::Bidding | crate::StateView::FinaleDue => {
+            Err("no verdict yet".to_string())
+        }
+    }
+}
+
+/// The signature on demand (docs/game-spec.md §8). Permissionless: the
+/// right is the derivation arithmetic — `km` comes from the record, the
+/// resolver from [lot_id], the fee from config; a foreign declaration
+/// derives an address where no escrow exists, and a signature for it is
+/// harmless. Nothing is stored: a retry re-signs the same recorded
+/// resolution, and two outcomes for one escrow never exist.
+#[ic_cdk::update]
+async fn request_signature(arg: RequestSignatureArg) -> Result<SignedVerdict, String> {
+    let spec = auth::spec_of(&arg.chain).map_err(|e| e.text().to_string())?;
+    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
+    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+
+    // Time first: a due tally must not wait for the global timer.
+    step_and_save(
+        &akey,
+        &mut record,
+        logic::Action::Tick,
+        crate::now_seconds(),
+    )?;
+
+    let lot_id =
+        auth::derive_lot_id(&arg.auction_id, &arg.text_hash).map_err(|e| e.text().to_string())?;
+    let lkey = crate::lot_key(&arg.chain, &arg.auction_id, &lot_id);
+    let resolver = match crate::load_lot(&lkey) {
+        Some(lot) => lot.resolver.to_vec(),
+        None => crate::sign::lot_resolver(&lot_id).await?,
+    };
+    let (escrow, _salt) = auth::derive_escrow(
+        spec,
+        &arg.donor,
+        &record.km,
+        arg.gross,
+        arg.deadline,
+        &resolver,
+        arg.nonce,
+    )
+    .map_err(|e| e.text().to_string())?;
+
+    // The await may have yielded: resolve against the freshest truth.
+    let record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
+    let lot = crate::load_lot(&lkey);
+    let entry = crate::load_entry(&crate::entry_key(
+        &arg.chain,
+        &arg.auction_id,
+        &lot_id,
+        &escrow,
+    ));
+    let outcome = resolve_outcome(&record, &lot, &entry, &lot_id)?;
+
+    // The contract outcome index of the resolution (factory-spec §2.2).
+    let outcome_byte = match outcome {
+        crate::OutcomeView::Settle => 0u8,
+        crate::OutcomeView::Cancel => 1u8,
+    };
+    let program = bs58::decode(spec.factory)
+        .into_vec()
+        .map_err(|_| "malformed factory program id")?;
+    let message = crate::sign::verdict_message(spec.domain, &program, &escrow, outcome_byte);
+    let signature = crate::sign::sign_verdict(&lot_id, &resolver, &message).await?;
+    Ok(SignedVerdict {
+        escrow: ByteBuf::from(escrow),
+        outcome,
+        signature: ByteBuf::from(signature),
+    })
 }
 
 // ---- queries -----------------------------------------------------------------
@@ -496,4 +846,156 @@ fn list_entries(chain: String, auction_id: ByteBuf, lot_id: ByteBuf) -> Vec<crat
 #[ic_cdk::query]
 fn get_logic_version() -> u32 {
     logic::LOGIC_VERSION
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
+mod tests {
+    use serde_bytes::ByteBuf;
+
+    use super::*;
+
+    const WINNER_LOT: [u8; 32] = [0xB1; 32];
+    const OTHER_LOT: [u8; 32] = [0xC2; 32];
+
+    fn record(state: crate::StateView, winner_lot: Option<[u8; 32]>) -> crate::AuctionRecord {
+        crate::AuctionRecord {
+            chain: "solana-devnet".to_string(),
+            auction_id: ByteBuf::from(vec![0xAA; 32]),
+            km: ByteBuf::from(vec![0x22; 32]),
+            km_nonce: 1,
+            created_at: 0,
+            duration: 60,
+            perform_window: 60,
+            voting_period: 60,
+            min_bid: 0,
+            state,
+            votes: Vec::new(),
+            winner_lot: winner_lot.map(|w| ByteBuf::from(w.to_vec())),
+            operator_returned_at: None,
+        }
+    }
+
+    fn lot(returned: bool) -> crate::LotRecord {
+        crate::LotRecord {
+            lot_id: ByteBuf::from(WINNER_LOT.to_vec()),
+            text_hash: ByteBuf::from(vec![0x01; 32]),
+            resolver: ByteBuf::from(vec![0x02; 32]),
+            accepted_at: Some(1),
+            returned: returned.then_some(crate::ReturnStamp {
+                at: 2,
+                by: crate::ActorView::Km,
+            }),
+            sum: 1,
+            entries: 1,
+        }
+    }
+
+    fn entry(returned: bool) -> crate::EntryRecord {
+        crate::EntryRecord {
+            escrow: ByteBuf::from(vec![0x03; 32]),
+            lot_id: ByteBuf::from(WINNER_LOT.to_vec()),
+            donor: ByteBuf::from(vec![0x04; 32]),
+            gross: 1,
+            deadline: 9,
+            nonce: 0,
+            seq: 1,
+            returned: returned.then_some(crate::ReturnStamp {
+                at: 2,
+                by: crate::ActorView::Operator,
+            }),
+        }
+    }
+
+    /// The three-step resolution, exhaustively: every state × winner/loser
+    /// × lot return × entry return. An entry's own return wins over
+    /// everything; a lot's return wins over the auction rule; the auction
+    /// rule frees losers the moment the finale stands and makes the winner
+    /// wait for its own verdict (game-spec §8).
+    #[test]
+    fn outcome_resolution_is_exhaustive() {
+        use crate::OutcomeView::{Cancel, Settle};
+        let states = [
+            crate::StateView::Bidding,
+            crate::StateView::FinaleDue,
+            crate::StateView::Performing,
+            crate::StateView::Voting { started_at: 1 },
+            crate::StateView::Done { winner: None },
+            crate::StateView::Done {
+                winner: Some(Settle),
+            },
+            crate::StateView::Done {
+                winner: Some(Cancel),
+            },
+        ];
+        for state in states {
+            for queried_lot in [WINNER_LOT, OTHER_LOT] {
+                for lot_returned in [false, true] {
+                    for entry_returned in [false, true] {
+                        // The finale names a winner only where one exists.
+                        let finale_ran = !matches!(
+                            state,
+                            crate::StateView::Bidding
+                                | crate::StateView::FinaleDue
+                                | crate::StateView::Done { winner: None }
+                        );
+                        let record = record(state.clone(), finale_ran.then_some(WINNER_LOT));
+                        let is_winner = finale_ran && queried_lot == WINNER_LOT;
+                        let got = resolve_outcome(
+                            &record,
+                            &Some(lot(lot_returned)),
+                            &Some(entry(entry_returned)),
+                            &queried_lot,
+                        );
+                        let expected = if entry_returned || lot_returned {
+                            Ok(Cancel)
+                        } else {
+                            match (&state, is_winner) {
+                                (crate::StateView::Done { winner }, true) => {
+                                    winner.ok_or_else(|| "no verdict yet".to_string())
+                                }
+                                (crate::StateView::Done { .. }, false) => Ok(Cancel),
+                                (
+                                    crate::StateView::Performing | crate::StateView::Voting { .. },
+                                    true,
+                                ) => Err("no verdict yet".to_string()),
+                                (
+                                    crate::StateView::Performing | crate::StateView::Voting { .. },
+                                    false,
+                                ) => Ok(Cancel),
+                                _ => Err("no verdict yet".to_string()),
+                            }
+                        };
+                        assert_eq!(got, expected, "state {state:?} winner {is_winner}");
+
+                        // A lot the registry never heard of resolves by the
+                        // auction rule alone.
+                        let got = resolve_outcome(&record, &None, &None, &queried_lot);
+                        let expected = match (&state, is_winner) {
+                            (crate::StateView::Done { winner }, true) => {
+                                winner.ok_or_else(|| "no verdict yet".to_string())
+                            }
+                            (crate::StateView::Done { .. }, false) => Ok(Cancel),
+                            (
+                                crate::StateView::Performing | crate::StateView::Voting { .. },
+                                true,
+                            ) => Err("no verdict yet".to_string()),
+                            (
+                                crate::StateView::Performing | crate::StateView::Voting { .. },
+                                false,
+                            ) => Ok(Cancel),
+                            _ => Err("no verdict yet".to_string()),
+                        };
+                        assert_eq!(got, expected, "unregistered lot, state {state:?}");
+                    }
+                }
+            }
+        }
+    }
 }

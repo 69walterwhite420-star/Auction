@@ -12,8 +12,11 @@ pub mod auth;
 pub mod certify;
 pub mod sign;
 pub mod solana;
+pub mod weight;
 
 use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use auction_logic as logic;
 use candid::{CandidType, Decode, Encode};
@@ -48,6 +51,8 @@ pub(crate) const ENTRIES_MEMORY: MemoryId = MemoryId::new(2);
 pub(crate) const ENTRY_LOT_MEMORY: MemoryId = MemoryId::new(3);
 pub(crate) const SEQ_MEMORY: MemoryId = MemoryId::new(4);
 pub(crate) const SOL_RPC_MEMORY: MemoryId = MemoryId::new(5);
+pub(crate) const CROWN_INDEX_MEMORY: MemoryId = MemoryId::new(6);
+pub(crate) const OPERATOR_WALLET_MEMORY: MemoryId = MemoryId::new(7);
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -83,6 +88,43 @@ thread_local! {
     /// real deploys, where the well-known canister id is the only authority.
     static SOL_RPC_OVERRIDE: RefCell<StableCell<Vec<u8>, Memory>> =
         RefCell::new(StableCell::init(memory(SOL_RPC_MEMORY), Vec::new()));
+
+    /// Local-testing override of the crown-index principal; empty on real
+    /// deploys, where the baked config value is the only authority.
+    static CROWN_INDEX_OVERRIDE: RefCell<StableCell<Vec<u8>, Memory>> =
+        RefCell::new(StableCell::init(memory(CROWN_INDEX_MEMORY), Vec::new()));
+
+    /// Local-testing override of the operator wallet; empty on real deploys,
+    /// where the baked config value is the only authority.
+    static OPERATOR_WALLET_OVERRIDE: RefCell<StableCell<Vec<u8>, Memory>> =
+        RefCell::new(StableCell::init(memory(OPERATOR_WALLET_MEMORY), Vec::new()));
+
+    /// (due time, auction key) of every undecided auction; heap index over
+    /// stable truth, rebuilt on upgrade. Stale entries are harmless:
+    /// processing an auction recomputes its real due time.
+    static DUE: RefCell<BTreeSet<(u64, Vec<u8>)>> = const { RefCell::new(BTreeSet::new()) };
+
+    /// Finale scans in flight, keyed by auction key. Heap: an upgrade
+    /// forgets them and the scan restarts from the first entry — the
+    /// registry is frozen in FINALE_DUE, so a restart folds the same facts.
+    static SCANS: RefCell<BTreeMap<Vec<u8>, FinaleScan>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+pub(crate) fn crown_index() -> Option<candid::Principal> {
+    CROWN_INDEX_OVERRIDE.with_borrow(|cell| weight::resolve(cell.get(), CROWN_INDEX))
+}
+
+/// The operator wallet: the override if set, else the baked config value.
+/// `None` while neither pins one — then no operator return exists.
+pub(crate) fn operator_wallet() -> Option<[u8; 32]> {
+    let stored = OPERATOR_WALLET_OVERRIDE.with_borrow(|cell| cell.get().clone());
+    let bytes = if stored.is_empty() {
+        bs58::decode(OPERATOR_WALLET).into_vec().ok()?
+    } else {
+        stored
+    };
+    bytes.try_into().ok()
 }
 
 pub(crate) fn memory(id: MemoryId) -> Memory {
@@ -346,12 +388,32 @@ pub(crate) fn load_auction(key: &[u8]) -> Option<AuctionRecord> {
     load_auction_bytes(key).map(|bytes| decode(&bytes, "auctions"))
 }
 
-/// Persists an auction record and refreshes the certified tree. The single
-/// write path: every auction mutation ends here.
+/// Persists an auction record, refreshes the certified tree and the due
+/// index. The single write path: every auction mutation ends here.
 pub(crate) fn save_auction(key: &[u8], record: &AuctionRecord) {
     let bytes = encode(record, "auction record");
     AUCTIONS.with_borrow_mut(|auctions| auctions.insert(key.to_vec(), bytes.clone()));
     certify::upsert(key, &bytes);
+    if let Some(due) = due_of(record) {
+        DUE.with_borrow_mut(|set| set.insert((due, key.to_vec())));
+    }
+}
+
+fn due_of(record: &AuctionRecord) -> Option<u64> {
+    match record.state {
+        StateView::Bidding => Some(record.created_at.saturating_add(record.duration)),
+        // The scan is due the moment the state exists; chunks re-arm a
+        // near-immediate tick themselves.
+        StateView::FinaleDue => Some(0),
+        StateView::Performing => Some(
+            record
+                .created_at
+                .saturating_add(record.duration)
+                .saturating_add(record.perform_window),
+        ),
+        StateView::Voting { started_at } => Some(started_at.saturating_add(record.voting_period)),
+        StateView::Done { .. } => None,
+    }
 }
 
 pub(crate) fn load_lot_bytes(key: &[u8]) -> Option<Vec<u8>> {
@@ -421,21 +483,189 @@ pub(crate) fn entries_of_lot(chain: &str, auction_id: &[u8], lot_id: &[u8]) -> V
     })
 }
 
-// ---- time ------------------------------------------------------------------
+// ---- time and the finale scan ----------------------------------------------
 
 pub(crate) fn now_seconds() -> u64 {
     ic_cdk::api::time() / 1_000_000_000
 }
 
+/// The timer only backstops "time first" inside every step: a late tick can
+/// delay a due transition, never corrupt it.
+const TICK_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How many due auctions one timer tick processes before yielding — the
+/// bound that keeps a burst of simultaneous deadlines from trapping the
+/// tick (the Сбор lesson).
+const MAX_DUE_PER_TICK: usize = 50;
+
+/// How many entries one finale scan slice folds before yielding.
+const SCAN_CHUNK: usize = 50;
+
+/// A finale scan in flight: the resume cursor into the entries map, the lot
+/// being collected (entries of one lot are contiguous under the key order),
+/// and the running best.
+#[derive(Default)]
+struct FinaleScan {
+    cursor: Option<Vec<u8>>,
+    current: Option<(Vec<u8>, Vec<logic::Entry>)>,
+    best: Option<(Vec<u8>, logic::Standing)>,
+}
+
+/// Folds a fully-collected lot into the running best. Only accepted,
+/// unreturned lots with a live standing race (game-spec §9); the comparison
+/// is `logic::beats` — the same law `logic::winner` folds with.
+fn fold_scanned_lot(chain: &str, auction_id: &[u8], scan: &mut FinaleScan) {
+    let Some((lot_id, entries)) = scan.current.take() else {
+        return;
+    };
+    let Some(lot) = load_lot(&lot_key(chain, auction_id, &lot_id)) else {
+        return;
+    };
+    if lot.accepted_at.is_none() || lot.returned.is_some() {
+        return;
+    }
+    let Some(standing) = logic::standing(&entries) else {
+        return;
+    };
+    let replace = match &scan.best {
+        None => true,
+        Some((_, incumbent)) => logic::beats(&standing, incumbent),
+    };
+    if replace {
+        scan.best = Some((lot_id, standing));
+    }
+}
+
+/// One bounded slice of the finale scan (game-spec §9). The registry is
+/// frozen in FINALE_DUE — no registrations, accepts or returns — so slices
+/// across ticks measure one immutable composition. Returns true when the
+/// finale was applied and the record saved.
+fn finale_scan_chunk(akey: &[u8], record: &mut AuctionRecord, now: u64) -> bool {
+    let mut scan = SCANS
+        .with_borrow_mut(|scans| scans.remove(&akey.to_vec()))
+        .unwrap_or_default();
+    let auction_id = record.auction_id.to_vec();
+    let chain = record.chain.clone();
+    let prefix = auction_key(&chain, &auction_id);
+
+    let start = match &scan.cursor {
+        Some(cursor) => std::ops::Bound::Excluded(cursor.clone()),
+        None => std::ops::Bound::Included(prefix.clone()),
+    };
+    let chunk: Vec<(Vec<u8>, EntryRecord)> = ENTRIES.with_borrow(|entries| {
+        entries
+            .range((start, std::ops::Bound::Unbounded))
+            .take_while(|e| e.key().starts_with(&prefix))
+            .take(SCAN_CHUNK)
+            .map(|e| (e.key().clone(), decode(&e.value(), "entries")))
+            .collect()
+    });
+    let finished = chunk.len() < SCAN_CHUNK;
+    for (key, entry) in chunk {
+        let lot_id = entry.lot_id.to_vec();
+        if scan.current.as_ref().map(|(id, _)| id) != Some(&lot_id) {
+            fold_scanned_lot(&chain, &auction_id, &mut scan);
+            scan.current = Some((lot_id, Vec::new()));
+        }
+        if let Some((_, collected)) = &mut scan.current {
+            collected.push(logic::Entry {
+                gross: entry.gross,
+                seq: entry.seq,
+                alive: entry.returned.is_none(),
+            });
+        }
+        scan.cursor = Some(key);
+    }
+    if !finished {
+        SCANS.with_borrow_mut(|scans| scans.insert(akey.to_vec(), scan));
+        return false;
+    }
+    fold_scanned_lot(&chain, &auction_id, &mut scan);
+    let winner = scan.best.take();
+    let mut auction = record.to_logic();
+    if logic::step(
+        &mut auction,
+        logic::Action::Finale {
+            winner: winner.is_some(),
+        },
+        now,
+    )
+    .is_err()
+    {
+        // Unreachable from FINALE_DUE; refusing to guess leaves the record
+        // untouched for the next tick.
+        return true;
+    }
+    record.winner_lot = winner.map(|(lot_id, _)| serde_bytes::ByteBuf::from(lot_id));
+    record.absorb(&auction);
+    save_auction(akey, record);
+    true
+}
+
+/// Applies due time transitions to at most `MAX_DUE_PER_TICK` auctions.
+/// Saving re-inserts the auction's next due time. Returns `true` when due
+/// work remains — the timer then re-arms a near-immediate tick.
+fn process_due(now: u64) -> bool {
+    for _ in 0..MAX_DUE_PER_TICK {
+        let entry = DUE.with_borrow(|set| set.first().cloned());
+        let Some((due, key)) = entry else {
+            return false;
+        };
+        if due > now {
+            return false;
+        }
+        DUE.with_borrow_mut(|set| set.remove(&(due, key.clone())));
+        let Some(mut record) = load_auction(&key) else {
+            continue;
+        };
+        if record.state == StateView::FinaleDue {
+            // One bounded scan slice; unfinished work re-arms instead of
+            // spinning this loop with the same auction.
+            if !finale_scan_chunk(&key, &mut record, now) {
+                DUE.with_borrow_mut(|set| set.insert((0, key)));
+                return true;
+            }
+            continue;
+        }
+        let before = record.clone();
+        let mut auction = record.to_logic();
+        // On success the state advances and is re-saved; an unchanged tick
+        // (a stale due entry) writes nothing and re-inserts nothing.
+        if logic::step(&mut auction, logic::Action::Tick, now).is_ok() {
+            record.absorb(&auction);
+            if record != before {
+                save_auction(&key, &record);
+            }
+        }
+    }
+    DUE.with_borrow(|set| set.first().is_some_and(|(due, _)| *due <= now))
+}
+
+fn schedule_tick(delay: Duration) {
+    let now = ic_cdk::api::time();
+    ic_cdk::api::global_timer_set(now.saturating_add(delay.as_nanos() as u64));
+}
+
+#[cfg_attr(target_family = "wasm", unsafe(export_name = "canister_global_timer"))]
+#[allow(dead_code)]
+fn global_timer() {
+    // Re-arm first: a trap inside processing must not stop the schedule.
+    schedule_tick(TICK_INTERVAL);
+    if process_due(now_seconds()) {
+        schedule_tick(Duration::from_secs(1));
+    }
+}
+
 // ---- lifecycle ---------------------------------------------------------------
 
-/// Local-testing overrides, for replicas where the real SOL RPC canister
-/// does not exist. Forbidden on mainnet: there the baked config and the
-/// well-known canister id are the only truth. G3 adds the operator wallet
-/// and the book principal alongside their consumers.
+/// Local-testing overrides, for replicas where the real SOL RPC canister,
+/// crown-index or operator key do not exist. Forbidden on mainnet: there
+/// the baked config and the well-known canister ids are the only truth.
 #[derive(CandidType, Deserialize)]
 pub struct Overrides {
     pub sol_rpc: Option<candid::Principal>,
+    pub crown_index: Option<candid::Principal>,
+    pub operator_wallet: Option<serde_bytes::ByteBuf>,
 }
 
 #[ic_cdk::init]
@@ -450,8 +680,18 @@ fn init(overrides: Option<Overrides>) {
         if let Some(principal) = overrides.sol_rpc {
             SOL_RPC_OVERRIDE.with_borrow_mut(|cell| cell.set(principal.as_slice().to_vec()));
         }
+        if let Some(principal) = overrides.crown_index {
+            CROWN_INDEX_OVERRIDE.with_borrow_mut(|cell| cell.set(principal.as_slice().to_vec()));
+        }
+        if let Some(wallet) = overrides.operator_wallet {
+            if wallet.len() != 32 {
+                ic_cdk::trap("operator wallet override: not 32 bytes");
+            }
+            OPERATOR_WALLET_OVERRIDE.with_borrow_mut(|cell| cell.set(wallet.into_vec()));
+        }
     }
     certify::recertify();
+    schedule_tick(Duration::from_secs(1));
 }
 
 #[ic_cdk::post_upgrade]
@@ -461,7 +701,15 @@ fn post_upgrade() {
     }
     let mut all: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     AUCTIONS.with_borrow(|map| {
-        all.extend(map.iter().map(|e| (e.key().clone(), e.value().clone())));
+        for entry in map.iter() {
+            let record: AuctionRecord = decode(&entry.value(), "auctions");
+            if let Some(due) = due_of(&record) {
+                DUE.with_borrow_mut(|set| {
+                    set.insert((due, entry.key().clone()));
+                });
+            }
+            all.push((entry.key().clone(), entry.value().clone()));
+        }
     });
     LOTS.with_borrow(|map| {
         all.extend(map.iter().map(|e| (e.key().clone(), e.value().clone())));
@@ -470,4 +718,5 @@ fn post_upgrade() {
         all.extend(map.iter().map(|e| (e.key().clone(), e.value().clone())));
     });
     certify::rebuild(all.into_iter());
+    schedule_tick(Duration::from_secs(1));
 }

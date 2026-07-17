@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
 members = ["logic", "canister"]
-exclude = ["canister/tests/mock-sol-rpc"]
+exclude = ["canister/tests/mock-sol-rpc", "canister/tests/mock-index"]

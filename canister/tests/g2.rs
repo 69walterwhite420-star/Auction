@@ -280,8 +280,9 @@ fn registration_applies_the_law() {
         "unknown auction"
     );
 
-    // Expired bidding: the clock applies first and persists as FINALE_DUE
-    // even though the registration is rejected.
+    // Expired bidding: the clock applies first and the registration is
+    // rejected; the timer then runs the finale — nothing was accepted, so
+    // the auction dies unwon.
     s.pic.advance_time(std::time::Duration::from_secs(DURATION));
     s.pic.tick();
     let late = plant_bid(&s, &auction_id, &km, 0x24, TEXT_A, 1_000, deadline, 5);
@@ -291,7 +292,7 @@ fn registration_applies_the_law() {
     );
     assert_eq!(
         auction_state(&fetch_auction(&s, &auction_id)).state,
-        StateView::FinaleDue
+        StateView::Done { winner: None }
     );
 }
 
@@ -485,7 +486,8 @@ fn km_cancel_kills_the_auction_in_bidding_only() {
         "invalid transition"
     );
 
-    // Expired bidding closes the cancel door too, on a fresh auction.
+    // Expired bidding closes the cancel door too, on a fresh auction; the
+    // timer then finalizes the lotless auction into an unwon Done.
     let auction_b = create_auction(&s, &km, 2).expect("create");
     s.pic.advance_time(std::time::Duration::from_secs(DURATION));
     s.pic.tick();
@@ -495,7 +497,7 @@ fn km_cancel_kills_the_auction_in_bidding_only() {
     );
     assert_eq!(
         auction_state(&fetch_auction(&s, &auction_b)).state,
-        StateView::FinaleDue
+        StateView::Done { winner: None }
     );
 }
 

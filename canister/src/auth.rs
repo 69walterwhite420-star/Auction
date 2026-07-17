@@ -45,8 +45,7 @@ impl Choice {
 
 /// What the participant is signing for. Carries the fields that belong to
 /// that action and nothing else — an action and its payload cannot
-/// disagree, because there is no separate payload. G3 adds the vote and the
-/// operator words alongside their methods.
+/// disagree, because there is no separate payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Create {
@@ -65,6 +64,14 @@ pub enum Action {
         escrow: Vec<u8>,
     },
     Cancel,
+    Ready,
+    Vote(Choice),
+    OperatorRefundLot {
+        lot: [u8; 32],
+    },
+    OperatorRefundEntry {
+        escrow: Vec<u8>,
+    },
 }
 
 impl Action {
@@ -76,6 +83,10 @@ impl Action {
             Action::ReturnLot { .. } => "return-lot",
             Action::ReturnEntry { .. } => "return-entry",
             Action::Cancel => "cancel",
+            Action::Ready => "ready",
+            Action::Vote(_) => "vote",
+            Action::OperatorRefundLot { .. } => "operator-refund-lot",
+            Action::OperatorRefundEntry { .. } => "operator-refund-entry",
         }
     }
 }
@@ -124,9 +135,10 @@ pub fn spec_of(chain: &str) -> Result<&'static ChainSpec, AuthError> {
 ///
 /// The first five lines — domain, `action:`, `chain:`, `canister:`,
 /// `auction:` — open every action except `create`, which has no `auction:`
-/// line (the id derives from its `km_nonce:`). `accept` and `return-lot`
-/// add `lot:` (hex), `return-entry` adds `escrow:` (base58), `cancel` adds
-/// nothing.
+/// line (the id derives from its `km_nonce:`). `accept`, `return-lot` and
+/// `operator-refund-lot` add `lot:` (hex); `return-entry` and
+/// `operator-refund-entry` add `escrow:` (base58); `vote` adds `choice:`;
+/// `cancel` and `ready` add nothing.
 ///
 /// The encoding is injective — two different messages cannot render to the
 /// same text — because the keys are fixed and ordered, the action decides
@@ -161,13 +173,14 @@ pub fn auction_message(
             out.push_str(&format!("perform_window: {perform_window}\n"));
             out.push_str(&format!("min_bid: {min_bid}\n"));
         }
-        Action::Accept { lot } | Action::ReturnLot { lot } => {
+        Action::Accept { lot } | Action::ReturnLot { lot } | Action::OperatorRefundLot { lot } => {
             out.push_str(&format!("lot: {}\n", hex(lot)));
         }
-        Action::ReturnEntry { escrow } => {
+        Action::ReturnEntry { escrow } | Action::OperatorRefundEntry { escrow } => {
             out.push_str(&format!("escrow: {}\n", bs58::encode(escrow).into_string()));
         }
-        Action::Cancel => {}
+        Action::Vote(choice) => out.push_str(&format!("choice: {}\n", choice.word())),
+        Action::Cancel | Action::Ready => {}
     }
     out
 }
@@ -484,6 +497,77 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ready_message_is_pinned() {
+        assert_eq!(
+            auction_message("solana-devnet", CANISTER, &AUCTION, &Action::Ready),
+            format!(
+                "crown:auction:v1\n\
+                 action: ready\n\
+                 chain: solana-devnet\n\
+                 canister: {CANISTER}\n\
+                 auction: {AUCTION_HEX}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn vote_message_is_pinned() {
+        for (choice, word) in [(Choice::Done, "done"), (Choice::NotDone, "not_done")] {
+            assert_eq!(
+                auction_message("solana-devnet", CANISTER, &AUCTION, &Action::Vote(choice)),
+                format!(
+                    "crown:auction:v1\n\
+                     action: vote\n\
+                     chain: solana-devnet\n\
+                     canister: {CANISTER}\n\
+                     auction: {AUCTION_HEX}\n\
+                     choice: {word}\n"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn operator_refund_messages_are_pinned() {
+        assert_eq!(
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::OperatorRefundLot { lot: LOT },
+            ),
+            format!(
+                "crown:auction:v1\n\
+                 action: operator-refund-lot\n\
+                 chain: solana-devnet\n\
+                 canister: {CANISTER}\n\
+                 auction: {AUCTION_HEX}\n\
+                 lot: {LOT_HEX}\n"
+            )
+        );
+        let escrow = vec![0x11; 32];
+        assert_eq!(
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::OperatorRefundEntry {
+                    escrow: escrow.clone()
+                },
+            ),
+            format!(
+                "crown:auction:v1\n\
+                 action: operator-refund-entry\n\
+                 chain: solana-devnet\n\
+                 canister: {CANISTER}\n\
+                 auction: {AUCTION_HEX}\n\
+                 escrow: {}\n",
+                bs58::encode(&escrow).into_string()
+            )
+        );
+    }
+
     /// The whole point: a wallet must be able to show this to a human.
     /// Phantom rejects anything that is not valid UTF-8.
     #[test]
@@ -574,6 +658,33 @@ mod tests {
                     duration: 60,
                     perform_window: 60,
                     min_bid: 0,
+                },
+            ),
+            auction_message("solana-devnet", CANISTER, &AUCTION, &Action::Ready),
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::Vote(Choice::Done),
+            ),
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::Vote(Choice::NotDone),
+            ),
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::OperatorRefundLot { lot: LOT },
+            ),
+            auction_message(
+                "solana-devnet",
+                CANISTER,
+                &AUCTION,
+                &Action::OperatorRefundEntry {
+                    escrow: vec![0x11; 32],
                 },
             ),
         ];

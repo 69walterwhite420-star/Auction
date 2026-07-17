@@ -96,11 +96,35 @@ type AuctionActionArg = record {
   auction_id : blob;
   signature : blob;
 };
+type VoteArg = record {
+  chain : text;
+  auction_id : blob;
+  voter : blob;
+  choice : Choice;
+  signature : blob;
+};
+type RequestSignatureArg = record {
+  chain : text;
+  auction_id : blob;
+  text_hash : blob;
+  donor : blob;
+  gross : nat64;
+  deadline : nat64;
+  nonce : nat64;
+};
+type SignedVerdict = record {
+  escrow : blob;
+  outcome : Outcome;
+  signature : blob;
+};
 type BlobResult = variant { Ok : blob; Err : text };
 type ActionResult = variant { Ok; Err : text };
+type SignatureResult = variant { Ok : SignedVerdict; Err : text };
 // Local-testing overrides; a mainnet-profile build traps on them.
 type Overrides = record {
   sol_rpc : opt principal;
+  crown_index : opt principal;
+  operator_wallet : opt blob;
 };
 
 service : (opt Overrides) -> {
@@ -111,6 +135,11 @@ service : (opt Overrides) -> {
   return_lot : (LotActionArg) -> (ActionResult);
   return_entry : (EntryActionArg) -> (ActionResult);
   cancel_auction : (AuctionActionArg) -> (ActionResult);
+  ready : (AuctionActionArg) -> (ActionResult);
+  vote : (VoteArg) -> (ActionResult);
+  operator_refund_lot : (LotActionArg) -> (ActionResult);
+  operator_refund_entry : (EntryActionArg) -> (ActionResult);
+  request_signature : (RequestSignatureArg) -> (SignatureResult);
   get_auction : (text, blob) -> (opt CertifiedRecord) query;
   get_lot : (text, blob, blob) -> (opt CertifiedRecord) query;
   list_lots : (text, blob) -> (vec Lot) query;

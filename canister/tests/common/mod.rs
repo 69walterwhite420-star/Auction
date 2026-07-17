@@ -51,15 +51,30 @@ pub fn mock_wasm() -> Vec<u8> {
     std::fs::read(path).expect("mock wasm missing: run scripts/test-canister.sh")
 }
 
+pub fn mock_index_wasm() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/mock-index/target/wasm32-unknown-unknown/release/mock_crown_index.wasm"
+    );
+    std::fs::read(path).expect("mock index wasm missing: run scripts/test-canister.sh")
+}
+
+/// The operator wallet every test instance is installed with, via the init
+/// override — the baked testnet key's secret lives outside the repo.
+pub fn operator() -> Wallet {
+    wallet(0xE0)
+}
+
 pub struct Setup {
     pub pic: PocketIc,
     pub game: Principal,
     pub rpc: Principal,
+    pub index: Principal,
 }
 
-/// A game canister wired to the SOL RPC mock via the init override. Both
-/// sit on the NNS subnet so certificates carry no delegation; the II subnet
-/// provides the threshold keys.
+/// A game canister wired to the SOL RPC and crown-index mocks via the init
+/// overrides. Everything sits on the NNS subnet so certificates carry no
+/// delegation; the II subnet provides the threshold keys.
 pub fn setup() -> Setup {
     let pic = PocketIcBuilder::new()
         .with_nns_subnet()
@@ -71,11 +86,37 @@ pub fn setup() -> Setup {
     pic.add_cycles(rpc, 10_000_000_000_000);
     pic.install_canister(rpc, mock_wasm(), Encode!().unwrap(), None);
 
+    let index = pic.create_canister_on_subnet(None, None, nns);
+    pic.add_cycles(index, 10_000_000_000_000);
+    pic.install_canister(index, mock_index_wasm(), Encode!().unwrap(), None);
+
     let game = pic.create_canister_on_subnet(None, None, nns);
     pic.add_cycles(game, 10_000_000_000_000);
-    let overrides = auction::Overrides { sol_rpc: Some(rpc) };
+    let overrides = auction::Overrides {
+        sol_rpc: Some(rpc),
+        crown_index: Some(index),
+        operator_wallet: Some(ByteBuf::from(operator().address)),
+    };
     pic.install_canister(game, game_wasm(), Encode!(&Some(overrides)).unwrap(), None);
-    Setup { pic, game, rpc }
+    Setup {
+        pic,
+        game,
+        rpc,
+        index,
+    }
+}
+
+pub fn seed_reputation(s: &Setup, voter: &[u8], km: &[u8], value: u128) {
+    let arg = Encode!(
+        &CHAIN.to_string(),
+        &ByteBuf::from(voter.to_vec()),
+        &ByteBuf::from(km.to_vec()),
+        &value
+    )
+    .unwrap();
+    s.pic
+        .update_call(s.index, Principal::anonymous(), "set_reputation", arg)
+        .expect("seed reputation");
 }
 
 pub fn now_seconds(pic: &PocketIc) -> u64 {
@@ -444,6 +485,167 @@ pub fn cancel_auction(s: &Setup, auction_id: &[u8], signer: &Wallet) -> Result<(
     let (result,): (Result<(), String>,) =
         update(&s.pic, s.game, "cancel_auction", Encode!(&arg).unwrap());
     result
+}
+
+pub fn ready(s: &Setup, auction_id: &[u8], signer: &Wallet) -> Result<(), String> {
+    let message = auth::auction_message(CHAIN, &s.game.to_text(), auction_id, &auth::Action::Ready);
+    let arg = AuctionActionArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        signature: ByteBuf::from(sign(signer, message.as_bytes())),
+    };
+    let (result,): (Result<(), String>,) = update(&s.pic, s.game, "ready", Encode!(&arg).unwrap());
+    result
+}
+
+pub fn vote(
+    s: &Setup,
+    auction_id: &[u8],
+    voter: &Wallet,
+    choice: auction::ChoiceView,
+) -> Result<(), String> {
+    let auth_choice = match choice {
+        auction::ChoiceView::Done => auth::Choice::Done,
+        auction::ChoiceView::NotDone => auth::Choice::NotDone,
+    };
+    let message = auth::auction_message(
+        CHAIN,
+        &s.game.to_text(),
+        auction_id,
+        &auth::Action::Vote(auth_choice),
+    );
+    let arg = auction::api::VoteArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        voter: ByteBuf::from(voter.address.clone()),
+        choice,
+        signature: ByteBuf::from(sign(voter, message.as_bytes())),
+    };
+    let (result,): (Result<(), String>,) = update(&s.pic, s.game, "vote", Encode!(&arg).unwrap());
+    result
+}
+
+pub fn operator_refund_lot(
+    s: &Setup,
+    auction_id: &[u8],
+    lot_id: [u8; 32],
+    signer: &Wallet,
+) -> Result<(), String> {
+    let message = auth::auction_message(
+        CHAIN,
+        &s.game.to_text(),
+        auction_id,
+        &auth::Action::OperatorRefundLot { lot: lot_id },
+    );
+    let arg = LotActionArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        lot_id: ByteBuf::from(lot_id.to_vec()),
+        signature: ByteBuf::from(sign(signer, message.as_bytes())),
+    };
+    let (result,): (Result<(), String>,) = update(
+        &s.pic,
+        s.game,
+        "operator_refund_lot",
+        Encode!(&arg).unwrap(),
+    );
+    result
+}
+
+pub fn operator_refund_entry(
+    s: &Setup,
+    auction_id: &[u8],
+    escrow: &[u8],
+    signer: &Wallet,
+) -> Result<(), String> {
+    let message = auth::auction_message(
+        CHAIN,
+        &s.game.to_text(),
+        auction_id,
+        &auth::Action::OperatorRefundEntry {
+            escrow: escrow.to_vec(),
+        },
+    );
+    let arg = EntryActionArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        escrow: ByteBuf::from(escrow.to_vec()),
+        signature: ByteBuf::from(sign(signer, message.as_bytes())),
+    };
+    let (result,): (Result<(), String>,) = update(
+        &s.pic,
+        s.game,
+        "operator_refund_entry",
+        Encode!(&arg).unwrap(),
+    );
+    result
+}
+
+pub fn request_signature(
+    s: &Setup,
+    auction_id: &[u8],
+    bid: &Bid,
+) -> Result<auction::api::SignedVerdict, String> {
+    request_signature_raw(
+        s,
+        auction_id,
+        &bid.text_hash,
+        &bid.donor.address,
+        bid.gross,
+        bid.deadline,
+        bid.nonce,
+    )
+}
+
+pub fn request_signature_raw(
+    s: &Setup,
+    auction_id: &[u8],
+    text_hash: &[u8],
+    donor: &[u8],
+    gross: u64,
+    deadline: u64,
+    nonce: u64,
+) -> Result<auction::api::SignedVerdict, String> {
+    let arg = auction::api::RequestSignatureArg {
+        chain: CHAIN.to_string(),
+        auction_id: ByteBuf::from(auction_id.to_vec()),
+        text_hash: ByteBuf::from(text_hash.to_vec()),
+        donor: ByteBuf::from(donor.to_vec()),
+        gross,
+        deadline,
+        nonce,
+    };
+    let (result,): (Result<auction::api::SignedVerdict, String>,) =
+        update(&s.pic, s.game, "request_signature", Encode!(&arg).unwrap());
+    result
+}
+
+/// Verifies a verdict signature offchain exactly the way the escrow's
+/// ed25519_program instruction would: Ed25519 over DOMAIN ‖ program ‖
+/// escrow ‖ outcome against the lot's resolver.
+pub fn verify_verdict(resolver: &[u8], escrow: &[u8], outcome: u8, signature: &[u8]) {
+    let mut message = Vec::new();
+    message.extend_from_slice(b"crown:two-outcome:solana-devnet");
+    message.extend_from_slice(&bs58::decode(FACTORY).into_vec().unwrap());
+    message.extend_from_slice(escrow);
+    message.push(outcome);
+    let key: [u8; 32] = resolver.try_into().expect("resolver is 32 bytes");
+    let signature: [u8; 64] = signature.try_into().expect("signature is 64 bytes");
+    ed25519_dalek::VerifyingKey::from_bytes(&key)
+        .expect("resolver is a key")
+        .verify_strict(&message, &ed25519_dalek::Signature::from_bytes(&signature))
+        .expect("verdict signature verifies against the lot resolver");
+}
+
+/// Advances time and runs enough ticks for the global timer to drain due
+/// work — including a chunked finale scan, whose slices re-arm a
+/// near-immediate (+1s) tick: each round must move the clock past it.
+pub fn advance(s: &Setup, secs: u64) {
+    s.pic.advance_time(std::time::Duration::from_secs(secs));
+    for _ in 0..12 {
+        s.pic.advance_time(std::time::Duration::from_secs(2));
+        s.pic.tick();
+    }
 }
 
 // ---- reads -------------------------------------------------------------------
