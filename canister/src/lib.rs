@@ -495,8 +495,7 @@ pub(crate) fn now_seconds() -> u64 {
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How many due auctions one timer tick processes before yielding — the
-/// bound that keeps a burst of simultaneous deadlines from trapping the
-/// tick (the Сбор lesson).
+/// bound that keeps a burst of simultaneous deadlines from trapping the tick.
 const MAX_DUE_PER_TICK: usize = 50;
 
 /// How many entries one finale scan slice folds before yielding.

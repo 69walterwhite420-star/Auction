@@ -1,4 +1,4 @@
-//! G2 — торги: реестр, чтение чейна, возвраты (docs/build-plan.md).
+//! G2 — bidding: the registry, the chain read, returns (docs/build-plan.md).
 //! PocketIC: the game canister next to the SOL RPC mock; escrow fixtures are
 //! planted into the mock and registration must tell real from fake.
 

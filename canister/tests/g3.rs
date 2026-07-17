@@ -1,7 +1,7 @@
-//! G3 — финал, голосование, подписи (docs/build-plan.md). PocketIC: таймеры
-//! доводят торги до финала порционным сканом, голоса взвешиваются мок-книгой,
-//! вердикты подписываются threshold-ключом лота и проверяются оффчейн против
-//! его резолвера — это и есть паритет пути деривации.
+//! G3 — finale, voting, signatures (docs/build-plan.md). PocketIC: the timer
+//! drives bidding to the finale through the chunked scan, votes are weighted
+//! by the mock book, verdicts are signed by the lot's threshold key and
+//! verified offchain against its resolver — that is the derivation-path parity.
 
 mod common;
 
