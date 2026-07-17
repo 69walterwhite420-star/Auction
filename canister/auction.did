@@ -1,4 +1,119 @@
-// Frozen update surface (docs/game-spec.md §6); the allowlist lint in
-// scripts/lint-boundaries.sh rejects any update method beyond it. Methods
-// appear as their stages land (G2–G3).
-service : {}
+// Update surface is frozen by docs/standards.md: only
+// {create_auction, get_resolver, register_entry, accept_lot, return_lot,
+// return_entry, cancel_auction, ready, vote, operator_refund_lot,
+// operator_refund_entry, request_signature} may ever appear as non-query
+// methods; the CI lint fails on anything else. Methods land with their
+// stages (G2-G3).
+
+type Outcome = variant { settle; cancel };
+type State = variant {
+  bidding;
+  finale_due;
+  performing;
+  voting : record { started_at : nat64 };
+  done : record { winner : opt Outcome };
+};
+type Choice = variant { done; not_done };
+type Vote = record { voter : blob; choice : Choice; weight : nat };
+type Actor = variant { km; operator };
+// Attribution of a return: who and when, certified forever.
+type ReturnStamp = record { at : nat64; by : Actor };
+type Auction = record {
+  chain : text;
+  auction_id : blob;
+  km : blob;
+  km_nonce : nat64;
+  created_at : nat64;
+  duration : nat64;
+  perform_window : nat64;
+  voting_period : nat64;
+  min_bid : nat64;
+  state : State;
+  votes : vec Vote;
+  winner_lot : opt blob;
+  operator_returned_at : opt nat64;
+};
+type Lot = record {
+  lot_id : blob;
+  text_hash : blob;
+  resolver : blob;
+  accepted_at : opt nat64;
+  returned : opt ReturnStamp;
+  sum : nat;
+  entries : nat64;
+};
+type Entry = record {
+  escrow : blob;
+  lot_id : blob;
+  donor : blob;
+  gross : nat64;
+  deadline : nat64;
+  nonce : nat64;
+  seq : nat64;
+  returned : opt ReturnStamp;
+};
+type CertifiedRecord = record {
+  data : blob;
+  certificate : opt blob;
+  witness : blob;
+};
+type CreateAuctionArg = record {
+  chain : text;
+  km : blob;
+  km_nonce : nat64;
+  duration : nat64;
+  perform_window : nat64;
+  min_bid : nat64;
+  signature : blob;
+};
+type GetResolverArg = record {
+  auction_id : blob;
+  text_hash : blob;
+};
+type RegisterEntryArg = record {
+  chain : text;
+  auction_id : blob;
+  text_hash : blob;
+  donor : blob;
+  gross : nat64;
+  deadline : nat64;
+  nonce : nat64;
+};
+type LotActionArg = record {
+  chain : text;
+  auction_id : blob;
+  lot_id : blob;
+  signature : blob;
+};
+type EntryActionArg = record {
+  chain : text;
+  auction_id : blob;
+  escrow : blob;
+  signature : blob;
+};
+type AuctionActionArg = record {
+  chain : text;
+  auction_id : blob;
+  signature : blob;
+};
+type BlobResult = variant { Ok : blob; Err : text };
+type ActionResult = variant { Ok; Err : text };
+// Local-testing overrides; a mainnet-profile build traps on them.
+type Overrides = record {
+  sol_rpc : opt principal;
+};
+
+service : (opt Overrides) -> {
+  create_auction : (CreateAuctionArg) -> (BlobResult);
+  get_resolver : (GetResolverArg) -> (BlobResult);
+  register_entry : (RegisterEntryArg) -> (BlobResult);
+  accept_lot : (LotActionArg) -> (ActionResult);
+  return_lot : (LotActionArg) -> (ActionResult);
+  return_entry : (EntryActionArg) -> (ActionResult);
+  cancel_auction : (AuctionActionArg) -> (ActionResult);
+  get_auction : (text, blob) -> (opt CertifiedRecord) query;
+  get_lot : (text, blob, blob) -> (opt CertifiedRecord) query;
+  list_lots : (text, blob) -> (vec Lot) query;
+  list_entries : (text, blob, blob) -> (vec Entry) query;
+  get_logic_version : () -> (nat32) query;
+}

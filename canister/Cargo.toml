@@ -7,3 +7,28 @@ edition = "2024"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
+auction-logic = { path = "../logic" }
+crown-derive = { version = "0.1.0", path = "../../../Crown-Factory/derive" }
+crown-salt = { version = "0.1.0", path = "../../../Crown-Factory/salt" }
+candid = "0.10"
+ic-cdk = "0.20"
+ic-cdk-management-canister = "0.1"
+ic-canister-runtime = "0.2"
+ic-stable-structures = "0.7"
+ic-certified-map = "0.4"
+sol_rpc_client = "6"
+sol_rpc_types = "3"
+solana-pubkey = "4"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_cbor = "0.11"
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+bs58 = "0.5"
+
+[dev-dependencies]
+pocket-ic = "10"
+hex = "0.4"
+base64 = "0.22"
+ic-certification = "3"
+ic-verify-bls-signature = "0.6"

@@ -1,0 +1,18 @@
+# Test double of the SOL RPC canister for PocketIC runs. Not a workspace
+# member: it exists only as a wasm the integration tests install next to the
+# game. Speaks the exact candid surface sol_rpc_client calls for one method
+# pair — getAccountInfo and its cycles-cost query.
+[package]
+name = "mock-sol-rpc"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid = "0.10"
+ic-cdk = "0.20"
+sol_rpc_types = "3"
+
+[workspace]
