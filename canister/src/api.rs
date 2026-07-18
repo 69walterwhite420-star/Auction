@@ -435,56 +435,7 @@ pub struct EntryActionArg {
 /// resolution of the lot lose the entry.
 #[ic_cdk::update]
 fn return_entry(arg: EntryActionArg) -> Result<(), String> {
-    let akey = crate::auction_key(&arg.chain, &arg.auction_id);
-    let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
-
-    let message = auth::auction_message(
-        &arg.chain,
-        &canister_text(),
-        &arg.auction_id,
-        &auth::Action::ReturnEntry {
-            escrow: arg.escrow.to_vec(),
-        },
-    );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
-        .map_err(|e| e.text().to_string())?;
-
-    let lot_id = crate::lot_of_entry(&arg.chain, &arg.auction_id, &arg.escrow)
-        .ok_or_else(|| "unknown entry".to_string())?;
-    let in_winner_lot = record.winner_lot.as_ref().map(|w| w.to_vec()) == Some(lot_id.clone());
-
-    let now = crate::now_seconds();
-    step_and_save(
-        &akey,
-        &mut record,
-        logic::Action::ReturnEntry {
-            by: logic::Actor::Km,
-            in_winner_lot,
-        },
-        now,
-    )?;
-
-    let lkey = crate::lot_key(&arg.chain, &arg.auction_id, &lot_id);
-    let mut lot = crate::load_lot(&lkey).ok_or_else(|| "unknown lot".to_string())?;
-    if lot.returned.is_some() {
-        return Err("lot already returned".to_string());
-    }
-    let ekey = crate::entry_key(&arg.chain, &arg.auction_id, &lot_id, &arg.escrow);
-    let mut entry = crate::load_entry(&ekey).ok_or_else(|| "unknown entry".to_string())?;
-    if entry.returned.is_some() {
-        return Err("entry already returned".to_string());
-    }
-    entry.returned = Some(crate::ReturnStamp {
-        at: now,
-        by: crate::ActorView::Km,
-    });
-    lot.sum = lot
-        .sum
-        .checked_sub(u128::from(entry.gross))
-        .ok_or("lot sum underflow")?;
-    crate::save_entry(&ekey, &entry);
-    crate::save_lot(&lkey, &lot);
-    Ok(())
+    refund_entry(arg, Refunder::Km)
 }
 
 /// The platform operator returns one entry (docs/game-spec.md §13): its
@@ -493,19 +444,43 @@ fn return_entry(arg: EntryActionArg) -> Result<(), String> {
 /// through PERFORMING and VOTING.
 #[ic_cdk::update]
 fn operator_refund_entry(arg: EntryActionArg) -> Result<(), String> {
+    refund_entry(arg, Refunder::Operator)
+}
+
+/// Who returns the entry: the two update methods differ only in the signer,
+/// the signed action word and the attribution tag.
+enum Refunder {
+    Km,
+    Operator,
+}
+
+fn refund_entry(arg: EntryActionArg, who: Refunder) -> Result<(), String> {
     let akey = crate::auction_key(&arg.chain, &arg.auction_id);
     let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
 
-    let operator = crate::operator_wallet().ok_or("no operator wallet configured")?;
-    let message = auth::auction_message(
-        &arg.chain,
-        &canister_text(),
-        &arg.auction_id,
-        &auth::Action::OperatorRefundEntry {
-            escrow: arg.escrow.to_vec(),
-        },
-    );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &operator)
+    let (signer, action, actor, view) = match who {
+        Refunder::Km => (
+            record.km.to_vec(),
+            auth::Action::ReturnEntry {
+                escrow: arg.escrow.to_vec(),
+            },
+            logic::Actor::Km,
+            crate::ActorView::Km,
+        ),
+        Refunder::Operator => (
+            crate::operator_wallet()
+                .ok_or("no operator wallet configured")?
+                .to_vec(),
+            auth::Action::OperatorRefundEntry {
+                escrow: arg.escrow.to_vec(),
+            },
+            logic::Actor::Operator,
+            crate::ActorView::Operator,
+        ),
+    };
+
+    let message = auth::auction_message(&arg.chain, &canister_text(), &arg.auction_id, &action);
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &signer)
         .map_err(|e| e.text().to_string())?;
 
     let lot_id = crate::lot_of_entry(&arg.chain, &arg.auction_id, &arg.escrow)
@@ -517,7 +492,7 @@ fn operator_refund_entry(arg: EntryActionArg) -> Result<(), String> {
         &akey,
         &mut record,
         logic::Action::ReturnEntry {
-            by: logic::Actor::Operator,
+            by: actor,
             in_winner_lot,
         },
         now,
@@ -533,10 +508,7 @@ fn operator_refund_entry(arg: EntryActionArg) -> Result<(), String> {
     if entry.returned.is_some() {
         return Err("entry already returned".to_string());
     }
-    entry.returned = Some(crate::ReturnStamp {
-        at: now,
-        by: crate::ActorView::Operator,
-    });
+    entry.returned = Some(crate::ReturnStamp { at: now, by: view });
     lot.sum = lot
         .sum
         .checked_sub(u128::from(entry.gross))
