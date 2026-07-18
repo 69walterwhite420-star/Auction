@@ -203,7 +203,9 @@ pub fn derive_auction_id(
     recipient: &[u8],
     recipient_nonce: u64,
 ) -> Result<[u8; 32], AuthError> {
-    let recipient: [u8; 32] = recipient.try_into().map_err(|_| AuthError::BadFieldLength)?;
+    let recipient: [u8; 32] = recipient
+        .try_into()
+        .map_err(|_| AuthError::BadFieldLength)?;
     let len: u8 = canister_id
         .len()
         .try_into()
@@ -250,7 +252,9 @@ pub fn derive_escrow(
     nonce: u64,
 ) -> Result<(Vec<u8>, [u8; 32]), AuthError> {
     let donor: [u8; 32] = donor.try_into().map_err(|_| AuthError::BadFieldLength)?;
-    let recipient: [u8; 32] = recipient.try_into().map_err(|_| AuthError::BadFieldLength)?;
+    let recipient: [u8; 32] = recipient
+        .try_into()
+        .map_err(|_| AuthError::BadFieldLength)?;
     let resolver: [u8; 32] = resolver.try_into().map_err(|_| AuthError::BadFieldLength)?;
     // The on-chain program takes deadline as i64; out-of-range is caught here.
     let deadline = i64::try_from(deadline).map_err(|_| AuthError::DeadlineOverflow)?;
@@ -849,8 +853,16 @@ mod tests {
         let donor = [0x11; 32];
         let recipient = [0x22; 32];
         let resolver = [0x33; 32];
-        let (escrow, salt) =
-            derive_escrow(&spec(), &donor, &recipient, 1_000_000, 1_900_000_000, &resolver, 7).unwrap();
+        let (escrow, salt) = derive_escrow(
+            &spec(),
+            &donor,
+            &recipient,
+            1_000_000,
+            1_900_000_000,
+            &resolver,
+            7,
+        )
+        .unwrap();
         assert_eq!(salt.to_vec(), unhex(SALT_VECTOR));
 
         let program: [u8; 32] = bs58::decode(spec().factory)

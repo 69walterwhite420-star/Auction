@@ -169,8 +169,13 @@ pub fn sign(wallet: &Wallet, message: &[u8]) -> Vec<u8> {
 
 // ---- flows -------------------------------------------------------------------
 
-pub fn create_auction(s: &Setup, recipient: &Wallet, recipient_nonce: u64) -> Result<Vec<u8>, String> {
-    let auction_id = auth::derive_auction_id(s.game.as_slice(), &recipient.address, recipient_nonce).unwrap();
+pub fn create_auction(
+    s: &Setup,
+    recipient: &Wallet,
+    recipient_nonce: u64,
+) -> Result<Vec<u8>, String> {
+    let auction_id =
+        auth::derive_auction_id(s.game.as_slice(), &recipient.address, recipient_nonce).unwrap();
     let message = auth::auction_message(
         CHAIN,
         &s.game.to_text(),

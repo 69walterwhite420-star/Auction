@@ -432,12 +432,12 @@ SIG_A1=$(await_signature "$TEXT_A" "$DONOR_HEX" "$A1_GROSS" "$DEADLINE" $((NONCE
 SIG_A2=$(await_signature "$TEXT_A" "$DONOR2_HEX" "$A2_GROSS" "$DEADLINE" $((NONCE + 2)) settle)
 
 echo "== claim(0) on both A entries: the win moves through the splitter"
-KM_BEFORE=$(driver balance "$SOL_RPC_URL" "$RECIPIENT")
+RECIPIENT_BEFORE=$(driver balance "$SOL_RPC_URL" "$RECIPIENT")
 driver claim "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$E_A1" 0 "$SIG_A1" "$R_A"
 driver claim "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$E_A2" 0 "$SIG_A2" "$R_A"
 A1_PAYOUT=$((A1_GROSS - A1_GROSS * FEE_BPS / 10000))
 A2_PAYOUT=$((A2_GROSS - A2_GROSS * FEE_BPS / 10000))
-EXPECTED=$((KM_BEFORE + A1_PAYOUT + A2_PAYOUT))
+EXPECTED=$((RECIPIENT_BEFORE + A1_PAYOUT + A2_PAYOUT))
 [ "$(driver balance "$SOL_RPC_URL" "$RECIPIENT")" = "$EXPECTED" ] || { echo "FAIL: recipient payout"; exit 1; }
 
 echo "== the book credits EACH donor of the winning lot"

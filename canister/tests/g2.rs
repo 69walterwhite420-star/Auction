@@ -112,9 +112,21 @@ fn registration_admits_a_real_escrow() {
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
 
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     let escrow = register_entry(&s, &auction_id, &entry).expect("register");
-    assert_eq!(escrow, entry.escrow, "the canister derived the same address");
+    assert_eq!(
+        escrow, entry.escrow,
+        "the canister derived the same address"
+    );
 
     let certified = fetch_lot(&s, &auction_id, &entry.lot_id);
     let lot = lot_state(&certified);
@@ -138,7 +150,16 @@ fn registration_admits_a_real_escrow() {
     assert!(entries[0].returned.is_none());
 
     // A top-up by another donor joins the same lot with the next seq.
-    let topup = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 8);
+    let topup = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        8,
+    );
     register_entry(&s, &auction_id, &topup).expect("top-up registers");
     let lot = lot_state(&fetch_lot(&s, &auction_id, &entry.lot_id));
     assert_eq!(lot.sum, 1_500_000);
@@ -252,21 +273,48 @@ fn registration_applies_the_law() {
     let deadline = good_deadline(created_at(&s, &auction_id));
 
     // The recipient's floor.
-    let dust = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, MIN_ENTRY - 1, deadline, 1);
+    let dust = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        MIN_ENTRY - 1,
+        deadline,
+        1,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &dust).unwrap_err(),
         "gross below the auction's min_entry"
     );
 
     // The deadline rule: one second short is short.
-    let short = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 1_000, deadline - 1, 2);
+    let short = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        1_000,
+        deadline - 1,
+        2,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &short).unwrap_err(),
         "escrow deadline too short"
     );
 
     // Double registration of one escrow.
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x23, TEXT_A, 1_000, deadline, 3);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x23,
+        TEXT_A,
+        1_000,
+        deadline,
+        3,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
     assert_eq!(
         register_entry(&s, &auction_id, &entry).unwrap_err(),
@@ -276,7 +324,16 @@ fn registration_applies_the_law() {
     // An unknown auction.
     let ghost = [0x00; 32];
     assert_eq!(
-        register(&s, &ghost, &TEXT_A, &entry.donor.address, 1_000, deadline, 4).unwrap_err(),
+        register(
+            &s,
+            &ghost,
+            &TEXT_A,
+            &entry.donor.address,
+            1_000,
+            deadline,
+            4
+        )
+        .unwrap_err(),
         "unknown auction"
     );
 
@@ -285,7 +342,16 @@ fn registration_applies_the_law() {
     // the auction dies unwon.
     s.pic.advance_time(std::time::Duration::from_secs(DURATION));
     s.pic.tick();
-    let late = plant_entry(&s, &auction_id, &recipient, 0x24, TEXT_A, 1_000, deadline, 5);
+    let late = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x24,
+        TEXT_A,
+        1_000,
+        deadline,
+        5,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &late).unwrap_err(),
         "invalid transition"
@@ -303,7 +369,16 @@ fn transport_failure_is_an_error_not_a_write() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
 
     set_broken(&s, true);
     let error = register_entry(&s, &auction_id, &entry).unwrap_err();
@@ -327,7 +402,16 @@ fn accept_takes_a_lot_into_the_race() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
 
     // A stranger cannot accept; an unknown lot cannot be accepted.
@@ -350,7 +434,16 @@ fn accept_takes_a_lot_into_the_race() {
     );
 
     // After expiry the door is closed — time first.
-    let late = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_B, 2_000_000, deadline, 8);
+    let late = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_B,
+        2_000_000,
+        deadline,
+        8,
+    );
     register_entry(&s, &auction_id, &late).expect("register");
     s.pic.advance_time(std::time::Duration::from_secs(DURATION));
     s.pic.tick();
@@ -367,7 +460,16 @@ fn returned_lot_leaves_the_race_and_takes_no_registrations() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
 
     let stranger = wallet(0x66);
@@ -390,7 +492,16 @@ fn returned_lot_leaves_the_race_and_takes_no_registrations() {
     );
 
     // A returned lot takes no further money.
-    let topup = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 8);
+    let topup = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        8,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &topup).unwrap_err(),
         "lot already returned"
@@ -404,9 +515,27 @@ fn returned_entry_leaves_the_sum_with_attribution() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let first = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let first = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     register_entry(&s, &auction_id, &first).expect("register");
-    let second = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 8);
+    let second = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        8,
+    );
     register_entry(&s, &auction_id, &second).expect("register");
 
     let stranger = wallet(0x66);
@@ -458,7 +587,16 @@ fn recipient_cancel_kills_the_auction_in_bidding_only() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
 
     let stranger = wallet(0x66);
@@ -472,7 +610,16 @@ fn recipient_cancel_kills_the_auction_in_bidding_only() {
     assert_eq!(record.state, StateView::Done { winner: None });
 
     // The dead auction takes nothing.
-    let late = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_B, 500_000, deadline, 8);
+    let late = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_B,
+        500_000,
+        deadline,
+        8,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &late).unwrap_err(),
         "invalid transition"
@@ -510,7 +657,16 @@ fn upgrade_preserves_records_byte_for_byte() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 7);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        7,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
     accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
 
@@ -534,7 +690,16 @@ fn upgrade_preserves_records_byte_for_byte() {
     );
 
     // The registry keeps working: the seq counter survived the upgrade.
-    let topup = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 8);
+    let topup = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        8,
+    );
     register_entry(&s, &auction_id, &topup).expect("register after upgrade");
     let entries = list_entries(&s, &auction_id, &entry.lot_id);
     assert_eq!(entries.len(), 2);

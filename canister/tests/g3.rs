@@ -38,13 +38,49 @@ fn finale_picks_the_richest_accepted_lot() {
 
     // A: 1.5M over two entries, accepted. B: 2M, accepted. C: 3M, never
     // accepted — the richest money loses to the richest *accepted* money.
-    let a1 = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let a1 = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
     register_entry(&s, &auction_id, &a1).expect("register");
-    let a2 = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 2);
+    let a2 = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        2,
+    );
     register_entry(&s, &auction_id, &a2).expect("register");
-    let b = plant_entry(&s, &auction_id, &recipient, 0x23, TEXT_B, 2_000_000, deadline, 3);
+    let b = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x23,
+        TEXT_B,
+        2_000_000,
+        deadline,
+        3,
+    );
     register_entry(&s, &auction_id, &b).expect("register");
-    let c = plant_entry(&s, &auction_id, &recipient, 0x24, TEXT_C, 3_000_000, deadline, 4);
+    let c = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x24,
+        TEXT_C,
+        3_000_000,
+        deadline,
+        4,
+    );
     register_entry(&s, &auction_id, &c).expect("register");
     accept_lot(&s, &auction_id, a1.lot_id, &recipient).expect("accept A");
     accept_lot(&s, &auction_id, b.lot_id, &recipient).expect("accept B");
@@ -77,11 +113,17 @@ fn finale_tie_goes_to_the_earliest_composition() {
     // later (seqs 2, 3). A wins the tie.
     let auction_a = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_a));
-    let a = plant_entry(&s, &auction_a, &recipient, 0x21, TEXT_A, 300_000, deadline, 1);
+    let a = plant_entry(
+        &s, &auction_a, &recipient, 0x21, TEXT_A, 300_000, deadline, 1,
+    );
     register_entry(&s, &auction_a, &a).expect("register");
-    let b1 = plant_entry(&s, &auction_a, &recipient, 0x22, TEXT_B, 100_000, deadline, 2);
+    let b1 = plant_entry(
+        &s, &auction_a, &recipient, 0x22, TEXT_B, 100_000, deadline, 2,
+    );
     register_entry(&s, &auction_a, &b1).expect("register");
-    let b2 = plant_entry(&s, &auction_a, &recipient, 0x23, TEXT_B, 200_000, deadline, 3);
+    let b2 = plant_entry(
+        &s, &auction_a, &recipient, 0x23, TEXT_B, 200_000, deadline, 3,
+    );
     register_entry(&s, &auction_a, &b2).expect("register");
     accept_lot(&s, &auction_a, a.lot_id, &recipient).expect("accept");
     accept_lot(&s, &auction_a, b1.lot_id, &recipient).expect("accept");
@@ -92,9 +134,13 @@ fn finale_tie_goes_to_the_earliest_composition() {
     // finale — B stands alone and wins.
     let auction_b = create_auction(&s, &recipient, 2).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_b));
-    let a = plant_entry(&s, &auction_b, &recipient, 0x31, TEXT_A, 300_000, deadline, 1);
+    let a = plant_entry(
+        &s, &auction_b, &recipient, 0x31, TEXT_A, 300_000, deadline, 1,
+    );
     register_entry(&s, &auction_b, &a).expect("register");
-    let b = plant_entry(&s, &auction_b, &recipient, 0x32, TEXT_B, 300_000, deadline, 2);
+    let b = plant_entry(
+        &s, &auction_b, &recipient, 0x32, TEXT_B, 300_000, deadline, 2,
+    );
     register_entry(&s, &auction_b, &b).expect("register");
     accept_lot(&s, &auction_b, a.lot_id, &recipient).expect("accept");
     accept_lot(&s, &auction_b, b.lot_id, &recipient).expect("accept");
@@ -114,19 +160,32 @@ fn finale_without_candidates_dies_unwon() {
     // (b) Registered but never accepted.
     let unaccepted = create_auction(&s, &recipient, 2).expect("create");
     let deadline = good_deadline(created_at(&s, &unaccepted));
-    let entry = plant_entry(&s, &unaccepted, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let entry = plant_entry(
+        &s,
+        &unaccepted,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
     register_entry(&s, &unaccepted, &entry).expect("register");
     // (c) Accepted, then the whole lot returned.
     let returned = create_auction(&s, &recipient, 3).expect("create");
     let deadline = good_deadline(created_at(&s, &returned));
-    let entry_c = plant_entry(&s, &returned, &recipient, 0x22, TEXT_A, 1_000_000, deadline, 1);
+    let entry_c = plant_entry(
+        &s, &returned, &recipient, 0x22, TEXT_A, 1_000_000, deadline, 1,
+    );
     register_entry(&s, &returned, &entry_c).expect("register");
     accept_lot(&s, &returned, entry_c.lot_id, &recipient).expect("accept");
     return_lot(&s, &returned, entry_c.lot_id, &recipient).expect("return");
     // (d) Accepted, but every entry individually returned: zero stands.
     let drained = create_auction(&s, &recipient, 4).expect("create");
     let deadline = good_deadline(created_at(&s, &drained));
-    let entry_d = plant_entry(&s, &drained, &recipient, 0x23, TEXT_A, 1_000_000, deadline, 1);
+    let entry_d = plant_entry(
+        &s, &drained, &recipient, 0x23, TEXT_A, 1_000_000, deadline, 1,
+    );
     register_entry(&s, &drained, &entry_d).expect("register");
     accept_lot(&s, &drained, entry_d.lot_id, &recipient).expect("accept");
     return_entry(&s, &drained, &entry_d.escrow, &recipient).expect("return");
@@ -190,9 +249,27 @@ fn finale_survives_a_burst_of_lots() {
 fn performing(s: &Setup, recipient: &Wallet, recipient_nonce: u64) -> (Vec<u8>, Entry, Entry) {
     let auction_id = create_auction(s, recipient, recipient_nonce).expect("create");
     let deadline = good_deadline(created_at(s, &auction_id));
-    let loser = plant_entry(s, &auction_id, recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let loser = plant_entry(
+        s,
+        &auction_id,
+        recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
     register_entry(s, &auction_id, &loser).expect("register");
-    let winner = plant_entry(s, &auction_id, recipient, 0x22, TEXT_B, 2_000_000, deadline, 2);
+    let winner = plant_entry(
+        s,
+        &auction_id,
+        recipient,
+        0x22,
+        TEXT_B,
+        2_000_000,
+        deadline,
+        2,
+    );
     register_entry(s, &auction_id, &winner).expect("register");
     accept_lot(s, &auction_id, loser.lot_id, recipient).expect("accept");
     accept_lot(s, &auction_id, winner.lot_id, recipient).expect("accept");
@@ -384,7 +461,9 @@ fn operator_returns_lots_entries_and_the_winner() {
     // In BIDDING: any lot, stamped with the operator's attribution.
     let auction_a = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_a));
-    let entry = plant_entry(&s, &auction_a, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let entry = plant_entry(
+        &s, &auction_a, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1,
+    );
     register_entry(&s, &auction_a, &entry).expect("register");
     assert_eq!(
         operator_refund_lot(&s, &auction_a, entry.lot_id, &stranger).unwrap_err(),
@@ -417,9 +496,13 @@ fn operator_returns_lots_entries_and_the_winner() {
     // bidding still ran — the registry closes at the finale.
     let auction_c = create_auction(&s, &recipient, 3).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_c));
-    let winner_c = plant_entry(&s, &auction_c, &recipient, 0x33, TEXT_B, 2_000_000, deadline, 1);
+    let winner_c = plant_entry(
+        &s, &auction_c, &recipient, 0x33, TEXT_B, 2_000_000, deadline, 1,
+    );
     register_entry(&s, &auction_c, &winner_c).expect("register");
-    let topup = plant_entry(&s, &auction_c, &recipient, 0x35, TEXT_B, 300_000, deadline, 2);
+    let topup = plant_entry(
+        &s, &auction_c, &recipient, 0x35, TEXT_B, 300_000, deadline, 2,
+    );
     register_entry(&s, &auction_c, &topup).expect("register");
     accept_lot(&s, &auction_c, winner_c.lot_id, &recipient).expect("accept");
     advance(&s, DURATION);
@@ -451,7 +534,16 @@ fn signatures_wait_for_verdicts_and_cover_unknown_lots() {
     let recipient = wallet(0x10);
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
     accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
 
@@ -461,8 +553,16 @@ fn signatures_wait_for_verdicts_and_cover_unknown_lots() {
         "no verdict yet"
     );
     assert_eq!(
-        request_signature_raw(&s, &[0x0D; 32], &TEXT_A, &entry.donor.address, 1, deadline, 1)
-            .unwrap_err(),
+        request_signature_raw(
+            &s,
+            &[0x0D; 32],
+            &TEXT_A,
+            &entry.donor.address,
+            1,
+            deadline,
+            1
+        )
+        .unwrap_err(),
         "unknown auction"
     );
 
@@ -512,7 +612,16 @@ fn operator_cancels_running_bidding_altogether() {
 
     let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
     register_entry(&s, &auction_id, &entry).expect("register");
     accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
 
@@ -527,7 +636,16 @@ fn operator_cancels_running_bidding_altogether() {
 
     // The dead auction takes nothing and every lot resolves to cancel —
     // the registered one and one the registry never heard of alike.
-    let late = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_B, 500_000, deadline, 2);
+    let late = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_B,
+        500_000,
+        deadline,
+        2,
+    );
     assert_eq!(
         register_entry(&s, &auction_id, &late).unwrap_err(),
         "invalid transition"

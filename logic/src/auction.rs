@@ -931,7 +931,11 @@ mod tests {
             entries
                 .into_iter()
                 .map(|(kind, voter, flag_a, flag_b, weight, offset)| {
-                    let actor = if flag_a { Actor::Recipient } else { Actor::Operator };
+                    let actor = if flag_a {
+                        Actor::Recipient
+                    } else {
+                        Actor::Operator
+                    };
                     let action = match kind {
                         ActionKind::Register => register(),
                         ActionKind::AcceptLot => Action::AcceptLot,
