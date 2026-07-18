@@ -5,16 +5,16 @@
 # real chain) and the game canister (the replica's threshold keys). Acts:
 #   1. a direct donate gives the donor the reputation they later vote with;
 #   2. a phantom registration (no escrow born) is rejected by the real read;
-#   3. lot A: donor's entry + contributor2's top-up + a third entry the KM
+#   3. lot A: donor's entry + donor2's top-up + a third entry the RECIPIENT
 #      returns mid-bidding — its cancel signature claims(1) at once, and the
 #      cancel signature does not open settle (a negative on the contract);
 #   4. lot B (smaller) — both lots accepted; bidding ends; the finale picks
 #      lot A; B resolves to cancel, its signature does not claim a foreign
 #      escrow (a negative), claim(1) returns the money;
 #   5. ready → the donor votes done → the tally settles; both A entries
-#      claim(0) through the splitter; the KM receives the sums net of the
+#      claim(0) through the splitter; the RECIPIENT receives the sums net of the
 #      game's fee;
-#   6. the book credits EACH contributor of the winning lot separately,
+#   6. the book credits EACH donor of the winning lot separately,
 #      zero anomalies; crown-core and crown-factory work trees stay clean.
 #
 # THE LOCAL REPLICA IS SHARED AND IS NEVER WIPED HERE: threshold keys born
@@ -28,11 +28,11 @@ cd "$(dirname "$0")/.."
 
 SOL_RPC_URL=${SOL_RPC_URL:-https://api.devnet.solana.com}
 SOL_DONOR_KEYPAIR=${SOL_DONOR_KEYPAIR:-$HOME/.cache/crown-e2e/donor.json}
-# The KM's permanent key (the same streamer as the sibling e2e): payouts and
+# The RECIPIENT's permanent key (the same recipient as the sibling e2e): payouts and
 # ATA rent stay recoverable between runs.
-SOL_KM_KEYPAIR=${SOL_KM_KEYPAIR:-$HOME/.cache/crown-e2e/streamer.json}
-# The permanent second contributor; funded from the donor as needed.
-SOL_CONTRIB2_KEYPAIR=${SOL_CONTRIB2_KEYPAIR:-$HOME/.cache/crown-e2e/contributor2.json}
+SOL_RECIPIENT_KEYPAIR=${SOL_RECIPIENT_KEYPAIR:-$HOME/.cache/crown-e2e/recipient.json}
+# The permanent second donor; funded from the donor as needed.
+SOL_DONOR2_KEYPAIR=${SOL_DONOR2_KEYPAIR:-$HOME/.cache/crown-e2e/donor2.json}
 CORE=$(cd ../../Crown-Core && pwd)
 FACTORY_REPO=$(cd ../../Crown-Factory && pwd)
 
@@ -51,7 +51,7 @@ A3_GROSS=10000
 B1_GROSS=5000
 DURATION=420
 PERFORM_WINDOW=180
-MIN_BID=1000
+MIN_ENTRY=1000
 TEXT_A=$(printf 'a1%.0s' $(seq 32))
 TEXT_B=$(printf 'b2%.0s' $(seq 32))
 NONCE=$(date +%s)
@@ -149,7 +149,7 @@ register_entry() { # text_hash_hex donor_hex gross deadline nonce -> escrow hex
     echo "FAIL: escrow never finalized" >&2
     exit 1
 }
-reputation() { # payer_blob km_blob
+reputation() { # payer_blob recipient_blob
     dfx canister call crown-index get_reputation "(\"solana-devnet\", blob \"$1\", blob \"$2\")" \
         --query | tr -d '(_ )' | sed 's/:nat//'
 }
@@ -179,11 +179,11 @@ await_signature() { # text_hash_hex donor_hex gross deadline nonce expected -> s
     echo "FAIL: signature never appeared" >&2
     exit 1
 }
-km_sign() { # action [args...] -> sig hex; the message travels by file
+recipient_sign() { # action [args...] -> sig hex; the message travels by file
     local msg sig
     msg=$(mktemp)
     participant auction-message solana-devnet "$GAME_ID" "$AUCTION" "$@" > "$msg"
-    sig=$(participant sol-sign "$SOL_KM_KEYPAIR" "$msg")
+    sig=$(participant sol-sign "$SOL_RECIPIENT_KEYPAIR" "$msg")
     rm -f "$msg"
     echo "$sig"
 }
@@ -191,31 +191,31 @@ km_sign() { # action [args...] -> sig hex; the message travels by file
 # ---- keys and funding -----------------------------------------------------
 
 DONOR=$(solana-keygen pubkey "$SOL_DONOR_KEYPAIR")
-[ -f "$SOL_KM_KEYPAIR" ] || solana-keygen new --no-bip39-passphrase --silent -o "$SOL_KM_KEYPAIR"
-KM=$(solana-keygen pubkey "$SOL_KM_KEYPAIR")
-[ -f "$SOL_CONTRIB2_KEYPAIR" ] || solana-keygen new --no-bip39-passphrase --silent -o "$SOL_CONTRIB2_KEYPAIR"
-CONTRIB2=$(solana-keygen pubkey "$SOL_CONTRIB2_KEYPAIR")
+[ -f "$SOL_RECIPIENT_KEYPAIR" ] || solana-keygen new --no-bip39-passphrase --silent -o "$SOL_RECIPIENT_KEYPAIR"
+RECIPIENT=$(solana-keygen pubkey "$SOL_RECIPIENT_KEYPAIR")
+[ -f "$SOL_DONOR2_KEYPAIR" ] || solana-keygen new --no-bip39-passphrase --silent -o "$SOL_DONOR2_KEYPAIR"
+DONOR2=$(solana-keygen pubkey "$SOL_DONOR2_KEYPAIR")
 DONOR_HEX=$(b58_hex "$DONOR")
-KM_HEX=$(b58_hex "$KM")
-CONTRIB2_HEX=$(b58_hex "$CONTRIB2")
+RECIPIENT_HEX=$(b58_hex "$RECIPIENT")
+DONOR2_HEX=$(b58_hex "$DONOR2")
 DONOR_BLOB=$(blob_hex "$DONOR_HEX")
-KM_BLOB=$(blob_hex "$KM_HEX")
-CONTRIB2_BLOB=$(blob_hex "$CONTRIB2_HEX")
+RECIPIENT_BLOB=$(blob_hex "$RECIPIENT_HEX")
+DONOR2_BLOB=$(blob_hex "$DONOR2_HEX")
 
-echo "donor=$DONOR km=$KM contributor2=$CONTRIB2"
+echo "donor=$DONOR recipient=$RECIPIENT donor2=$DONOR2"
 
-echo "== fund contributor2 if needed"
-SOL_BAL=$(solana balance "$CONTRIB2" -u "$SOL_RPC_URL" | awk '{print $1}')
+echo "== fund donor2 if needed"
+SOL_BAL=$(solana balance "$DONOR2" -u "$SOL_RPC_URL" | awk '{print $1}')
 if python3 -c "import sys; sys.exit(0 if float('$SOL_BAL') < 0.02 else 1)"; then
     solana transfer -u "$SOL_RPC_URL" --keypair "$SOL_DONOR_KEYPAIR" \
-        --allow-unfunded-recipient "$CONTRIB2" 0.03
+        --allow-unfunded-recipient "$DONOR2" 0.03
 fi
 USDC=$(grep "^usdc" "$CORE/config/testnet.toml" | head -1 | cut -d'"' -f2)
-USDC_BAL=$(driver balance "$SOL_RPC_URL" "$CONTRIB2")
+USDC_BAL=$(driver balance "$SOL_RPC_URL" "$DONOR2")
 if [ "$USDC_BAL" -lt "$A2_GROSS" ]; then
     spl-token transfer -u "$SOL_RPC_URL" --owner "$SOL_DONOR_KEYPAIR" \
         --fee-payer "$SOL_DONOR_KEYPAIR" --fund-recipient --allow-unfunded-recipient \
-        "$USDC" 0.03 "$CONTRIB2"
+        "$USDC" 0.03 "$DONOR2"
 fi
 
 # ---- configs and builds ----------------------------------------------------
@@ -293,24 +293,24 @@ echo "game=$GAME_ID"
 
 # The replica is shared and never wiped, so the book accumulates across
 # runs: every assertion below is relative to these baselines.
-DONOR_BOOK0=$(reputation "$DONOR_BLOB" "$KM_BLOB")
-CONTRIB2_BOOK0=$(reputation "$CONTRIB2_BLOB" "$KM_BLOB")
-echo "book baselines: donor=$DONOR_BOOK0 contributor2=$CONTRIB2_BOOK0"
+DONOR_BOOK0=$(reputation "$DONOR_BLOB" "$RECIPIENT_BLOB")
+DONOR2_BOOK0=$(reputation "$DONOR2_BLOB" "$RECIPIENT_BLOB")
+echo "book baselines: donor=$DONOR_BOOK0 donor2=$DONOR2_BOOK0"
 
 echo "== direct donate: the reputation the donor will vote with"
-driver donate "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$KM" "$SOL_DONATE"
+driver donate "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$RECIPIENT" "$SOL_DONATE"
 
 echo "== create the auction"
-AUCTION=$(participant auction-id "$GAME_ID" "$KM_HEX" "$NONCE")
-SIG=$(km_sign create "$NONCE" "$DURATION" "$PERFORM_WINDOW" "$MIN_BID")
+AUCTION=$(participant auction-id "$GAME_ID" "$RECIPIENT_HEX" "$NONCE")
+SIG=$(recipient_sign create "$NONCE" "$DURATION" "$PERFORM_WINDOW" "$MIN_ENTRY")
 CREATED=$(date +%s)
 game_call create_auction "(record {
     chain = \"solana-devnet\";
-    km = blob \"$KM_BLOB\";
-    km_nonce = $NONCE;
+    recipient = blob \"$RECIPIENT_BLOB\";
+    recipient_nonce = $NONCE;
     duration = $DURATION;
     perform_window = $PERFORM_WINDOW;
-    min_bid = $MIN_BID;
+    min_entry = $MIN_ENTRY;
     signature = blob \"$(blob_hex "$SIG")\" })" | grep -q Ok
 echo "auction=$AUCTION"
 DEADLINE=$((CREATED + DURATION + PERFORM_WINDOW + VOTING_PERIOD + MARGIN + 600))
@@ -327,37 +327,37 @@ echo "resolver B=$R_B"
 LOT_A=$(participant lot-id "$AUCTION" "$TEXT_A")
 LOT_B=$(participant lot-id "$AUCTION" "$TEXT_B")
 
-echo "== lot A: the donor's entry, contributor2's top-up, a third to return"
-E_A1=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$KM" "$A1_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 1)))
+echo "== lot A: the donor's entry, donor2's top-up, a third to return"
+E_A1=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$RECIPIENT" "$A1_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 1)))
 echo "escrow A1=$E_A1 (donor)"
 REG=$(register_entry "$TEXT_A" "$DONOR_HEX" "$A1_GROSS" "$DEADLINE" $((NONCE + 1)))
 [ "$REG" = "$(b58_hex "$E_A1")" ] || { echo "FAIL: A1 address parity"; exit 1; }
-E_A2=$(driver create "$SOL_RPC_URL" "$SOL_CONTRIB2_KEYPAIR" "$KM" "$A2_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 2)))
-echo "escrow A2=$E_A2 (contributor2)"
-register_entry "$TEXT_A" "$CONTRIB2_HEX" "$A2_GROSS" "$DEADLINE" $((NONCE + 2)) >/dev/null
-E_A3=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$KM" "$A3_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 3)))
+E_A2=$(driver create "$SOL_RPC_URL" "$SOL_DONOR2_KEYPAIR" "$RECIPIENT" "$A2_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 2)))
+echo "escrow A2=$E_A2 (donor2)"
+register_entry "$TEXT_A" "$DONOR2_HEX" "$A2_GROSS" "$DEADLINE" $((NONCE + 2)) >/dev/null
+E_A3=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$RECIPIENT" "$A3_GROSS" "$DEADLINE" "$R_A" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 3)))
 echo "escrow A3=$E_A3 (donor, to be returned)"
 register_entry "$TEXT_A" "$DONOR_HEX" "$A3_GROSS" "$DEADLINE" $((NONCE + 3)) >/dev/null
 
 echo "== lot B: the smaller rival"
-E_B=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$KM" "$B1_GROSS" "$DEADLINE" "$R_B" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 4)))
+E_B=$(driver create "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$RECIPIENT" "$B1_GROSS" "$DEADLINE" "$R_B" "$FEE_BPS" "$FEE_WALLET" $((NONCE + 4)))
 echo "escrow B=$E_B (donor)"
 register_entry "$TEXT_B" "$DONOR_HEX" "$B1_GROSS" "$DEADLINE" $((NONCE + 4)) >/dev/null
 
-echo "== the KM accepts both lots"
-SIG=$(km_sign accept "$LOT_A")
+echo "== the RECIPIENT accepts both lots"
+SIG=$(recipient_sign accept "$LOT_A")
 game_call accept_lot "(record { chain = \"solana-devnet\";
     auction_id = blob \"$(blob_hex "$AUCTION")\";
     lot_id = blob \"$(blob_hex "$LOT_A")\";
     signature = blob \"$(blob_hex "$SIG")\" })" | grep -q Ok
-SIG=$(km_sign accept "$LOT_B")
+SIG=$(recipient_sign accept "$LOT_B")
 game_call accept_lot "(record { chain = \"solana-devnet\";
     auction_id = blob \"$(blob_hex "$AUCTION")\";
     lot_id = blob \"$(blob_hex "$LOT_B")\";
     signature = blob \"$(blob_hex "$SIG")\" })" | grep -q Ok
 
-echo "== the KM returns entry A3 mid-bidding; its cancel claims at once"
-SIG=$(km_sign return-entry "$(b58_hex "$E_A3")")
+echo "== the RECIPIENT returns entry A3 mid-bidding; its cancel claims at once"
+SIG=$(recipient_sign return-entry "$(b58_hex "$E_A3")")
 game_call return_entry "(record { chain = \"solana-devnet\";
     auction_id = blob \"$(blob_hex "$AUCTION")\";
     escrow = blob \"$(blob_hex "$(b58_hex "$E_A3")")\";
@@ -374,7 +374,7 @@ echo "== wait out the bidding window; the timer runs the finale"
 NOW=$(date +%s)
 LEFT=$((CREATED + DURATION - NOW))
 [ "$LEFT" -gt 0 ] && { echo "sleeping ${LEFT}s + finale"; sleep $((LEFT + 5)); }
-READY_SIG=$(km_sign ready)
+READY_SIG=$(recipient_sign ready)
 for _ in $(seq 1 20); do
     OUT=$(game_call ready "(record { chain = \"solana-devnet\";
         auction_id = blob \"$(blob_hex "$AUCTION")\";
@@ -400,7 +400,7 @@ echo "== the donate ingest must land before the vote"
 DONATED=$((DONOR_BOOK0 + SOL_DONATE))
 REP=""
 for _ in $(seq 1 90); do
-    REP=$(reputation "$DONOR_BLOB" "$KM_BLOB")
+    REP=$(reputation "$DONOR_BLOB" "$RECIPIENT_BLOB")
     echo "reputation: $REP/$DONATED"
     [ "$REP" = "$DONATED" ] && break
     sleep 10
@@ -422,32 +422,32 @@ echo "== wait out the voting period, then the settle signatures"
 ELAPSED=$(($(date +%s) - VOTING_STARTED))
 [ "$ELAPSED" -lt "$VOTING_PERIOD" ] && { echo "sleeping $((VOTING_PERIOD - ELAPSED + 60))s"; sleep $((VOTING_PERIOD - ELAPSED + 60)); }
 SIG_A1=$(await_signature "$TEXT_A" "$DONOR_HEX" "$A1_GROSS" "$DEADLINE" $((NONCE + 1)) settle)
-SIG_A2=$(await_signature "$TEXT_A" "$CONTRIB2_HEX" "$A2_GROSS" "$DEADLINE" $((NONCE + 2)) settle)
+SIG_A2=$(await_signature "$TEXT_A" "$DONOR2_HEX" "$A2_GROSS" "$DEADLINE" $((NONCE + 2)) settle)
 
 echo "== claim(0) on both A entries: the win moves through the splitter"
-KM_BEFORE=$(driver balance "$SOL_RPC_URL" "$KM")
+KM_BEFORE=$(driver balance "$SOL_RPC_URL" "$RECIPIENT")
 driver claim "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$E_A1" 0 "$SIG_A1" "$R_A"
 driver claim "$SOL_RPC_URL" "$SOL_DONOR_KEYPAIR" "$E_A2" 0 "$SIG_A2" "$R_A"
 A1_PAYOUT=$((A1_GROSS - A1_GROSS * FEE_BPS / 10000))
 A2_PAYOUT=$((A2_GROSS - A2_GROSS * FEE_BPS / 10000))
 EXPECTED=$((KM_BEFORE + A1_PAYOUT + A2_PAYOUT))
-[ "$(driver balance "$SOL_RPC_URL" "$KM")" = "$EXPECTED" ] || { echo "FAIL: km payout"; exit 1; }
+[ "$(driver balance "$SOL_RPC_URL" "$RECIPIENT")" = "$EXPECTED" ] || { echo "FAIL: recipient payout"; exit 1; }
 
-echo "== the book credits EACH contributor of the winning lot"
-# The book sees what reached the KM: the direct donate whole, each
+echo "== the book credits EACH donor of the winning lot"
+# The book sees what reached the RECIPIENT: the direct donate whole, each
 # settlement net of the game's fee; returns and refunds never enter it.
 DONOR_TOTAL=$((DONOR_BOOK0 + SOL_DONATE + A1_PAYOUT))
-CONTRIB2_TOTAL=$((CONTRIB2_BOOK0 + A2_PAYOUT))
+DONOR2_TOTAL=$((DONOR2_BOOK0 + A2_PAYOUT))
 REP=""
 for _ in $(seq 1 90); do
-    REP=$(reputation "$DONOR_BLOB" "$KM_BLOB")
-    REP2=$(reputation "$CONTRIB2_BLOB" "$KM_BLOB")
-    echo "book: donor $REP/$DONOR_TOTAL contributor2 $REP2/$CONTRIB2_TOTAL"
-    [ "$REP" = "$DONOR_TOTAL" ] && [ "$REP2" = "$CONTRIB2_TOTAL" ] && break
+    REP=$(reputation "$DONOR_BLOB" "$RECIPIENT_BLOB")
+    REP2=$(reputation "$DONOR2_BLOB" "$RECIPIENT_BLOB")
+    echo "book: donor $REP/$DONOR_TOTAL donor2 $REP2/$DONOR2_TOTAL"
+    [ "$REP" = "$DONOR_TOTAL" ] && [ "$REP2" = "$DONOR2_TOTAL" ] && break
     sleep 10
 done
 [ "$REP" = "$DONOR_TOTAL" ] || { echo "FAIL: donor attribution"; exit 1; }
-[ "$REP2" = "$CONTRIB2_TOTAL" ] || { echo "FAIL: contributor2 attribution"; exit 1; }
+[ "$REP2" = "$DONOR2_TOTAL" ] || { echo "FAIL: donor2 attribution"; exit 1; }
 
 ANOMALIES=$(dfx canister call crown-index get_anomaly_count --query | tr -d '(_ )' | sed 's/:nat64//')
 [ "$ANOMALIES" = "0" ] || { echo "FAIL: anomaly count = $ANOMALIES"; exit 1; }

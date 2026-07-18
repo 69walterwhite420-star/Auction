@@ -476,7 +476,7 @@ mod tests {
     // --- registration gates ---------------------------------------------
 
     #[test]
-    fn register_applies_the_km_floor() {
+    fn register_applies_the_recipient_floor() {
         let mut a = auction();
         assert_eq!(
             step(
