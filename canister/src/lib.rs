@@ -192,8 +192,8 @@ pub struct ReturnStamp {
 
 #[derive(CandidType, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActorView {
-    #[serde(rename = "km")]
-    Km,
+    #[serde(rename = "recipient")]
+    Recipient,
     #[serde(rename = "operator")]
     Operator,
 }
@@ -204,16 +204,16 @@ pub enum ActorView {
 pub struct AuctionRecord {
     pub chain: String,
     pub auction_id: serde_bytes::ByteBuf,
-    pub km: serde_bytes::ByteBuf,
-    pub km_nonce: u64,
+    pub recipient: serde_bytes::ByteBuf,
+    pub recipient_nonce: u64,
     pub created_at: u64,
     pub duration: u64,
     pub perform_window: u64,
     /// Snapshot of the profile at birth; an auction carries its own clock
     /// forever.
     pub voting_period: u64,
-    /// The KM's floor for one entry's gross; 0 = only the shape's floor.
-    pub min_bid: u64,
+    /// The recipient's floor for one entry's gross; 0 = only the shape's floor.
+    pub min_entry: u64,
     pub state: StateView,
     /// Non-empty only from VOTING on; published forever after the verdict.
     pub votes: Vec<VoteView>,
@@ -304,7 +304,7 @@ impl AuctionRecord {
             duration: self.duration,
             perform_window: self.perform_window,
             voting_period: self.voting_period,
-            min_bid: self.min_bid,
+            min_entry: self.min_entry,
             state: state_from_view(&self.state),
             votes: self
                 .votes

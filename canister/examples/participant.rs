@@ -2,10 +2,10 @@
 //! wallet keys, so the shell scripts never re-implement the byte protocol.
 //!
 //! Usage:
-//!   participant auction-id <canister-principal> <km_hex> <km_nonce>
+//!   participant auction-id <canister-principal> <recipient_hex> <recipient_nonce>
 //!   participant lot-id <auction_id_hex> <text_hash_hex>
 //!   participant auction-message <chain> <canister-principal> <auction_id_hex> <action> [args]
-//!       action: create <km_nonce> <duration> <perform_window> <min_bid>
+//!       action: create <recipient_nonce> <duration> <perform_window> <min_entry>
 //!             | accept <lot_hex> | return-lot <lot_hex> | return-entry <escrow_hex>
 //!             | cancel | ready | vote <done|not_done>
 //!   participant sol-sign <keypair.json> <message-file>
@@ -40,15 +40,15 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = match args.get(1).map(String::as_str) {
         Some("auction-id") => {
-            let [canister, km, km_nonce] = &args[2..] else {
-                panic!("auction-id <canister> <km_hex> <km_nonce>");
+            let [canister, recipient, recipient_nonce] = &args[2..] else {
+                panic!("auction-id <canister> <recipient_hex> <recipient_nonce>");
             };
             let canister = Principal::from_text(canister).expect("principal");
             hex::encode(
                 auth::derive_auction_id(
                     canister.as_slice(),
-                    &hex_arg(km),
-                    km_nonce.parse().expect("km_nonce"),
+                    &hex_arg(recipient),
+                    recipient_nonce.parse().expect("recipient_nonce"),
                 )
                 .expect("auction id"),
             )
@@ -66,10 +66,10 @@ fn main() {
             let canister = Principal::from_text(canister).expect("principal");
             let action = match args[5].as_str() {
                 "create" => Action::Create {
-                    km_nonce: args[6].parse().expect("km_nonce"),
+                    recipient_nonce: args[6].parse().expect("recipient_nonce"),
                     duration: args[7].parse().expect("duration"),
                     perform_window: args[8].parse().expect("perform_window"),
-                    min_bid: args[9].parse().expect("min_bid"),
+                    min_entry: args[9].parse().expect("min_entry"),
                 },
                 "accept" => Action::Accept {
                     lot: hex_arg32(&args[6]),

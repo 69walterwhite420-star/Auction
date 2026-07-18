@@ -25,7 +25,7 @@ use crate::vote::{MIN_VOTE_WEIGHT, Vote};
 pub const LOGIC_VERSION: u32 = 2;
 
 /// All times are unix seconds; time is always an argument, never a syscall.
-/// Both KM handles — the bidding window and the performance window — share
+/// Both recipient handles — the bidding window and the performance window — share
 /// the same range.
 pub const MIN_DURATION: u64 = 60; // 1 minute
 pub const MAX_DURATION: u64 = 2_592_000; // 30 days
@@ -46,24 +46,24 @@ pub struct Profile {
 /// only applies the actor's window of the law.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Actor {
-    Km,
+    Recipient,
     Operator,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
-    /// Bids register, the KM accepts and returns; the leaderboard grows.
+    /// Entries register, the recipient accepts and returns; the leaderboard grows.
     Bidding,
     /// The clock closed bidding; the caller is computing the finale over
     /// its frozen registry.
     FinaleDue,
-    /// A winner exists; the KM performs the winning condition until
+    /// A winner exists; the recipient performs the winning condition until
     /// `created_at + duration + perform_window`.
     Performing,
-    /// The KM claimed the condition performed; reputation holders vote.
+    /// The recipient claimed the condition performed; reputation holders vote.
     Voting { started_at: u64 },
     /// Terminal. The winner lot's outcome; `None` when no winner ever
-    /// existed — no accepted lots, zero sums, or the KM cancelled the
+    /// existed — no accepted lots, zero sums, or the recipient cancelled the
     /// auction. Every non-winner lot resolves to cancel by the auction
     /// rule (game-spec §8).
     Done { winner: Option<Outcome> },
@@ -74,14 +74,14 @@ pub struct Auction {
     pub created_at: u64,
     /// The bidding window, from creation.
     pub duration: u64,
-    /// The KM's window to perform the winning condition, from the end of
+    /// The recipient's window to perform the winning condition, from the end of
     /// bidding.
     pub perform_window: u64,
     /// Snapshot of the profile at birth; an auction carries its own clock
     /// forever.
     pub voting_period: u64,
-    /// The KM's floor for one entry's gross; 0 = only the shape's floor.
-    pub min_bid: u64,
+    /// The recipient's floor for one entry's gross; 0 = only the shape's floor.
+    pub min_entry: u64,
     pub state: State,
     /// Non-empty only from VOTING on; published forever after the verdict.
     pub votes: Vec<Vote>,
@@ -90,19 +90,19 @@ pub struct Auction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     /// An entry registers: the caller verified the escrow on chain, this
-    /// arm applies the KM's floor and the deadline rule (game-spec §9).
+    /// arm applies the recipient's floor and the deadline rule (game-spec §9).
     Register { gross: u64, deadline: i64 },
-    /// The KM accepts a lot: its text goes public, the lot enters the race.
+    /// The recipient accepts a lot: its text goes public, the lot enters the race.
     AcceptLot,
-    /// The KM or the operator returns a whole lot (BIDDING only; the winner
+    /// The recipient or the operator returns a whole lot (BIDDING only; the winner
     /// goes through its own doors below).
     ReturnLot,
     /// One entry is returned. `in_winner_lot` is a registry fact supplied
     /// by the caller; before the finale every lot passes as the race is
     /// still open.
     ReturnEntry { by: Actor, in_winner_lot: bool },
-    /// The KM aborts the whole auction: cancel for every lot.
-    KmCancel,
+    /// The recipient aborts the whole auction: cancel for every lot.
+    RecipientCancel,
     /// The operator kills running bidding altogether — the censorship move
     /// against a stream of junk lots that per-lot returns would chase one
     /// by one (game-spec §5). After the finale the operator kills an
@@ -110,11 +110,11 @@ pub enum Action {
     OperatorCancel,
     /// The registry scan finished: a winner exists or not.
     Finale { winner: bool },
-    /// The KM claims the winning condition performed; voting opens.
+    /// The recipient claims the winning condition performed; voting opens.
     Ready,
-    /// The KM returns the winner before "ready": the auction dies
+    /// The recipient returns the winner before "ready": the auction dies
     /// unsettled — there is no second place (game-spec §5).
-    KmReturnWinner,
+    RecipientReturnWinner,
     /// The operator returns the winner; drawn in VOTING too (§13).
     OperatorReturnWinner,
     /// A reputation holder votes on the winner.
@@ -133,22 +133,22 @@ pub enum CreateError {
 pub enum StepError {
     /// The transition is not drawn on the diagram (or the clock closed it).
     InvalidTransition,
-    BelowMinBid,
+    BelowMinEntry,
     DeadlineTooShort,
     WeightBelowThreshold,
     DuplicateVoter,
     Overflow,
 }
 
-/// Validates the KM's handles against the rules and births the auction in
-/// BIDDING. On `Err` no auction exists. `min_bid` is any u64: 0 legally
+/// Validates the recipient's handles against the rules and births the auction in
+/// BIDDING. On `Err` no auction exists. `min_entry` is any u64: 0 legally
 /// leaves only the shape's own floor.
 pub fn create(
     now: u64,
     profile: &Profile,
     duration: u64,
     perform_window: u64,
-    min_bid: u64,
+    min_entry: u64,
 ) -> Result<Auction, CreateError> {
     if !(MIN_DURATION..=MAX_DURATION).contains(&duration) {
         return Err(CreateError::DurationOutOfRange);
@@ -161,7 +161,7 @@ pub fn create(
         duration,
         perform_window,
         voting_period: profile.voting_period,
-        min_bid,
+        min_entry,
         state: State::Bidding,
         votes: Vec::new(),
     })
@@ -174,8 +174,8 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
     let next = match (auction.state.clone(), action) {
         // --- bidding: the registry fills up ------------------------------
         (State::Bidding, Action::Register { gross, deadline }) => {
-            if gross < auction.min_bid {
-                return Err(StepError::BelowMinBid);
+            if gross < auction.min_entry {
+                return Err(StepError::BelowMinEntry);
             }
             let floor = deadline_floor(auction)?;
             if u64::try_from(deadline).unwrap_or(0) < floor {
@@ -186,7 +186,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         (State::Bidding, Action::AcceptLot)
         | (State::Bidding, Action::ReturnLot)
         | (State::Bidding, Action::ReturnEntry { .. }) => None,
-        (State::Bidding, Action::KmCancel) | (State::Bidding, Action::OperatorCancel) => {
+        (State::Bidding, Action::RecipientCancel) | (State::Bidding, Action::OperatorCancel) => {
             Some(State::Done { winner: None })
         }
 
@@ -196,7 +196,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
 
         // --- performing and the winner's doors ---------------------------
         (State::Performing, Action::Ready) => Some(State::Voting { started_at: now }),
-        (State::Performing, Action::KmReturnWinner)
+        (State::Performing, Action::RecipientReturnWinner)
         | (State::Performing, Action::OperatorReturnWinner)
         | (State::Voting { .. }, Action::OperatorReturnWinner) => Some(State::Done {
             winner: Some(Outcome::Cancel),
@@ -238,17 +238,17 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         // --- everything not drawn on the diagram (docs/game-spec.md §5) ----
         (State::Bidding, Action::Finale { .. })
         | (State::Bidding, Action::Ready)
-        | (State::Bidding, Action::KmReturnWinner)
+        | (State::Bidding, Action::RecipientReturnWinner)
         | (State::Bidding, Action::OperatorReturnWinner)
         | (State::Bidding, Action::Vote(_))
         | (State::FinaleDue, Action::Register { .. })
         | (State::FinaleDue, Action::AcceptLot)
         | (State::FinaleDue, Action::ReturnLot)
         | (State::FinaleDue, Action::ReturnEntry { .. })
-        | (State::FinaleDue, Action::KmCancel)
+        | (State::FinaleDue, Action::RecipientCancel)
         | (State::FinaleDue, Action::OperatorCancel)
         | (State::FinaleDue, Action::Ready)
-        | (State::FinaleDue, Action::KmReturnWinner)
+        | (State::FinaleDue, Action::RecipientReturnWinner)
         | (State::FinaleDue, Action::OperatorReturnWinner)
         | (State::FinaleDue, Action::Vote(_))
         | (State::Performing, Action::Register { .. })
@@ -261,7 +261,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
                 in_winner_lot: false,
             },
         )
-        | (State::Performing, Action::KmCancel)
+        | (State::Performing, Action::RecipientCancel)
         | (State::Performing, Action::OperatorCancel)
         | (State::Performing, Action::Finale { .. })
         | (State::Performing, Action::Vote(_))
@@ -271,7 +271,7 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
         | (
             State::Voting { .. },
             Action::ReturnEntry {
-                by: Actor::Km,
+                by: Actor::Recipient,
                 in_winner_lot: _,
             },
         )
@@ -282,20 +282,20 @@ pub fn step(auction: &mut Auction, action: Action, now: u64) -> Result<(), StepE
                 in_winner_lot: false,
             },
         )
-        | (State::Voting { .. }, Action::KmCancel)
+        | (State::Voting { .. }, Action::RecipientCancel)
         | (State::Voting { .. }, Action::OperatorCancel)
         | (State::Voting { .. }, Action::Finale { .. })
         | (State::Voting { .. }, Action::Ready)
-        | (State::Voting { .. }, Action::KmReturnWinner)
+        | (State::Voting { .. }, Action::RecipientReturnWinner)
         | (State::Done { .. }, Action::Register { .. })
         | (State::Done { .. }, Action::AcceptLot)
         | (State::Done { .. }, Action::ReturnLot)
         | (State::Done { .. }, Action::ReturnEntry { .. })
-        | (State::Done { .. }, Action::KmCancel)
+        | (State::Done { .. }, Action::RecipientCancel)
         | (State::Done { .. }, Action::OperatorCancel)
         | (State::Done { .. }, Action::Finale { .. })
         | (State::Done { .. }, Action::Ready)
-        | (State::Done { .. }, Action::KmReturnWinner)
+        | (State::Done { .. }, Action::RecipientReturnWinner)
         | (State::Done { .. }, Action::OperatorReturnWinner)
         | (State::Done { .. }, Action::Vote(_)) => {
             return Err(StepError::InvalidTransition);
@@ -386,7 +386,7 @@ mod tests {
     const DURATION: u64 = 86_400; // 1 day of bidding
     const PERFORM_WINDOW: u64 = 43_200; // half a day to perform
     const VOTING_PERIOD: u64 = 3_600;
-    const MIN_BID: u64 = 1_000;
+    const MIN_ENTRY: u64 = 1_000;
 
     const BIDDING_END: u64 = T0 + DURATION;
     const PERFORM_DEADLINE: u64 = BIDDING_END + PERFORM_WINDOW;
@@ -400,12 +400,12 @@ mod tests {
     }
 
     fn auction() -> Auction {
-        create(T0, &profile(), DURATION, PERFORM_WINDOW, MIN_BID).unwrap()
+        create(T0, &profile(), DURATION, PERFORM_WINDOW, MIN_ENTRY).unwrap()
     }
 
     fn register() -> Action {
         Action::Register {
-            gross: MIN_BID,
+            gross: MIN_ENTRY,
             deadline: GOOD_DEADLINE,
         }
     }
@@ -426,7 +426,7 @@ mod tests {
         a
     }
 
-    /// The KM claimed "ready" one second into PERFORMING: VOTING.
+    /// The recipient claimed "ready" one second into PERFORMING: VOTING.
     fn voting() -> Auction {
         let mut a = performing();
         step(&mut a, Action::Ready, BIDDING_END + 1).unwrap();
@@ -445,19 +445,19 @@ mod tests {
     fn create_validates_duration() {
         for bad in [MIN_DURATION - 1, MAX_DURATION + 1] {
             assert_eq!(
-                create(T0, &profile(), bad, PERFORM_WINDOW, MIN_BID),
+                create(T0, &profile(), bad, PERFORM_WINDOW, MIN_ENTRY),
                 Err(CreateError::DurationOutOfRange)
             );
         }
-        assert!(create(T0, &profile(), MIN_DURATION, PERFORM_WINDOW, MIN_BID).is_ok());
-        assert!(create(T0, &profile(), MAX_DURATION, PERFORM_WINDOW, MIN_BID).is_ok());
+        assert!(create(T0, &profile(), MIN_DURATION, PERFORM_WINDOW, MIN_ENTRY).is_ok());
+        assert!(create(T0, &profile(), MAX_DURATION, PERFORM_WINDOW, MIN_ENTRY).is_ok());
     }
 
     #[test]
     fn create_validates_perform_window() {
         for bad in [MIN_DURATION - 1, MAX_DURATION + 1] {
             assert_eq!(
-                create(T0, &profile(), DURATION, bad, MIN_BID),
+                create(T0, &profile(), DURATION, bad, MIN_ENTRY),
                 Err(CreateError::PerformWindowOutOfRange)
             );
         }
@@ -468,7 +468,7 @@ mod tests {
     fn auction_snapshots_profile() {
         let a = auction();
         assert_eq!(a.voting_period, VOTING_PERIOD);
-        assert_eq!(a.min_bid, MIN_BID);
+        assert_eq!(a.min_entry, MIN_ENTRY);
         assert_eq!(a.state, State::Bidding);
         assert!(a.votes.is_empty());
     }
@@ -482,12 +482,12 @@ mod tests {
             step(
                 &mut a,
                 Action::Register {
-                    gross: MIN_BID - 1,
+                    gross: MIN_ENTRY - 1,
                     deadline: GOOD_DEADLINE,
                 },
                 T0 + 1,
             ),
-            Err(StepError::BelowMinBid)
+            Err(StepError::BelowMinEntry)
         );
         assert!(step(&mut a, register(), T0 + 1).is_ok());
     }
@@ -501,7 +501,7 @@ mod tests {
             step(
                 &mut a,
                 Action::Register {
-                    gross: MIN_BID,
+                    gross: MIN_ENTRY,
                     deadline: GOOD_DEADLINE - 1,
                 },
                 T0 + 1,
@@ -512,7 +512,7 @@ mod tests {
             step(
                 &mut a,
                 Action::Register {
-                    gross: MIN_BID,
+                    gross: MIN_ENTRY,
                     deadline: -1,
                 },
                 T0 + 1,
@@ -531,7 +531,7 @@ mod tests {
             step(
                 &mut a,
                 Action::Register {
-                    gross: MIN_BID,
+                    gross: MIN_ENTRY,
                     deadline: i64::MAX,
                 },
                 now,
@@ -550,7 +550,7 @@ mod tests {
             Action::AcceptLot,
             Action::ReturnLot,
             Action::ReturnEntry {
-                by: Actor::Km,
+                by: Actor::Recipient,
                 in_winner_lot: false,
             },
             Action::ReturnEntry {
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn operator_cancel_kills_the_whole_auction_from_bidding_only() {
-        // The operator's whole-auction door mirrors the KM's: bidding only.
+        // The operator's whole-auction door mirrors the recipient's: bidding only.
         let mut a = auction();
         step(&mut a, Action::OperatorCancel, T0 + 1).unwrap();
         assert_eq!(a.state, State::Done { winner: None });
@@ -583,15 +583,15 @@ mod tests {
     }
 
     #[test]
-    fn km_cancel_kills_the_whole_auction_from_bidding_only() {
+    fn recipient_cancel_kills_the_whole_auction_from_bidding_only() {
         let mut a = auction();
-        step(&mut a, Action::KmCancel, T0 + 1).unwrap();
+        step(&mut a, Action::RecipientCancel, T0 + 1).unwrap();
         assert_eq!(a.state, State::Done { winner: None });
 
         // Expired bidding closes the door: the clock applies first.
         let mut a = auction();
         assert_eq!(
-            step(&mut a, Action::KmCancel, BIDDING_END),
+            step(&mut a, Action::RecipientCancel, BIDDING_END),
             Err(StepError::InvalidTransition)
         );
         assert_eq!(a.state, State::FinaleDue);
@@ -668,10 +668,10 @@ mod tests {
     }
 
     #[test]
-    fn km_returns_the_winner_before_ready_only() {
+    fn recipient_returns_the_winner_before_ready_only() {
         // Before "ready": the auction dies unsettled, no second place.
         let mut a = performing();
-        step(&mut a, Action::KmReturnWinner, BIDDING_END + 2).unwrap();
+        step(&mut a, Action::RecipientReturnWinner, BIDDING_END + 2).unwrap();
         assert_eq!(
             a.state,
             State::Done {
@@ -679,10 +679,10 @@ mod tests {
             }
         );
 
-        // "Ready" hands the work to the vote and closes the KM's door.
+        // "Ready" hands the work to the vote and closes the recipient's door.
         let mut a = voting();
         assert_eq!(
-            step(&mut a, Action::KmReturnWinner, BIDDING_END + 2),
+            step(&mut a, Action::RecipientReturnWinner, BIDDING_END + 2),
             Err(StepError::InvalidTransition)
         );
     }
@@ -744,7 +744,7 @@ mod tests {
     fn return_entry_windows_by_actor() {
         // PERFORMING: both actors may return a winner-lot entry; a lot that
         // lost is already decided and out of reach.
-        for by in [Actor::Km, Actor::Operator] {
+        for by in [Actor::Recipient, Actor::Operator] {
             let mut a = performing();
             step(
                 &mut a,
@@ -784,7 +784,7 @@ mod tests {
             step(
                 &mut a,
                 Action::ReturnEntry {
-                    by: Actor::Km,
+                    by: Actor::Recipient,
                     in_winner_lot: true,
                 },
                 BIDDING_END + 3,
@@ -910,11 +910,11 @@ mod tests {
                     Just(ActionKind::AcceptLot),
                     Just(ActionKind::ReturnLot),
                     Just(ActionKind::ReturnEntry),
-                    Just(ActionKind::KmCancel),
+                    Just(ActionKind::RecipientCancel),
                     Just(ActionKind::OperatorCancel),
                     Just(ActionKind::Finale),
                     Just(ActionKind::Ready),
-                    Just(ActionKind::KmReturnWinner),
+                    Just(ActionKind::RecipientReturnWinner),
                     Just(ActionKind::OperatorReturnWinner),
                     Just(ActionKind::Vote),
                     Just(ActionKind::Tick),
@@ -931,7 +931,7 @@ mod tests {
             entries
                 .into_iter()
                 .map(|(kind, voter, flag_a, flag_b, weight, offset)| {
-                    let actor = if flag_a { Actor::Km } else { Actor::Operator };
+                    let actor = if flag_a { Actor::Recipient } else { Actor::Operator };
                     let action = match kind {
                         ActionKind::Register => register(),
                         ActionKind::AcceptLot => Action::AcceptLot,
@@ -940,11 +940,11 @@ mod tests {
                             by: actor,
                             in_winner_lot: flag_b,
                         },
-                        ActionKind::KmCancel => Action::KmCancel,
+                        ActionKind::RecipientCancel => Action::RecipientCancel,
                         ActionKind::OperatorCancel => Action::OperatorCancel,
                         ActionKind::Finale => Action::Finale { winner: flag_b },
                         ActionKind::Ready => Action::Ready,
-                        ActionKind::KmReturnWinner => Action::KmReturnWinner,
+                        ActionKind::RecipientReturnWinner => Action::RecipientReturnWinner,
                         ActionKind::OperatorReturnWinner => Action::OperatorReturnWinner,
                         ActionKind::Vote => {
                             let choice = if flag_b {
@@ -968,11 +968,11 @@ mod tests {
         AcceptLot,
         ReturnLot,
         ReturnEntry,
-        KmCancel,
+        RecipientCancel,
         OperatorCancel,
         Finale,
         Ready,
-        KmReturnWinner,
+        RecipientReturnWinner,
         OperatorReturnWinner,
         Vote,
         Tick,
@@ -994,14 +994,14 @@ mod tests {
                     | (State::Bidding, Action::AcceptLot)
                     | (State::Bidding, Action::ReturnLot)
                     | (State::Bidding, Action::ReturnEntry { .. })
-                    | (State::Bidding, Action::KmCancel)
+                    | (State::Bidding, Action::RecipientCancel)
                     | (State::Bidding, Action::OperatorCancel) => now < BIDDING_END,
                     (State::FinaleDue, Action::Finale { .. }) => true,
                     // Time first: a Finale arriving after expiry lands in
                     // the FINALE_DUE the clock just entered.
                     (State::Bidding, Action::Finale { .. }) => now >= BIDDING_END,
                     (State::Performing, Action::Ready)
-                    | (State::Performing, Action::KmReturnWinner)
+                    | (State::Performing, Action::RecipientReturnWinner)
                     | (State::Performing, Action::OperatorReturnWinner)
                     | (State::Performing, Action::ReturnEntry { in_winner_lot: true, .. }) => {
                         now < PERFORM_DEADLINE
@@ -1031,7 +1031,7 @@ mod tests {
         fn done_is_absorbing(seq in actions(), road in 0u8..3) {
             let mut a = auction();
             match road {
-                0 => step(&mut a, Action::KmCancel, T0 + 1).unwrap(),
+                0 => step(&mut a, Action::RecipientCancel, T0 + 1).unwrap(),
                 1 => step(&mut a, Action::Finale { winner: false }, BIDDING_END).unwrap(),
                 _ => {
                     step(&mut a, Action::Finale { winner: true }, BIDDING_END).unwrap();

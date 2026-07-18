@@ -14,7 +14,7 @@ use crate::auth;
 fn step_error_text(error: logic::StepError) -> String {
     match error {
         logic::StepError::InvalidTransition => "invalid transition",
-        logic::StepError::BelowMinBid => "gross below the auction's min_bid",
+        logic::StepError::BelowMinEntry => "gross below the auction's min_entry",
         logic::StepError::DeadlineTooShort => "escrow deadline too short",
         logic::StepError::WeightBelowThreshold => "vote weight below threshold",
         logic::StepError::DuplicateVoter => "duplicate voter",
@@ -72,22 +72,22 @@ fn step_and_save(
 #[derive(CandidType, Deserialize)]
 pub struct CreateAuctionArg {
     pub chain: String,
-    pub km: ByteBuf,
-    pub km_nonce: u64,
+    pub recipient: ByteBuf,
+    pub recipient_nonce: u64,
     pub duration: u64,
     pub perform_window: u64,
-    pub min_bid: u64,
+    pub min_entry: u64,
     pub signature: ByteBuf,
 }
 
-/// Opens an auction: derives auction_id from (canister, km, km_nonce),
-/// checks the KM's signature over the handles and births the machine in
+/// Opens an auction: derives auction_id from (canister, recipient, recipient_nonce),
+/// checks the recipient's signature over the handles and births the machine in
 /// BIDDING (docs/game-spec.md §5, §11). Synchronous — no key derivation
 /// happens here: lots derive their own resolvers when they appear.
 #[ic_cdk::update]
 fn create_auction(arg: CreateAuctionArg) -> Result<ByteBuf, String> {
     auth::spec_of(&arg.chain).map_err(|e| e.text().to_string())?;
-    let auction_id = auth::derive_auction_id(&canister_id(), &arg.km, arg.km_nonce)
+    let auction_id = auth::derive_auction_id(&canister_id(), &arg.recipient, arg.recipient_nonce)
         .map_err(|e| e.text().to_string())?;
     let key = crate::auction_key(&arg.chain, &auction_id);
     if crate::load_auction_bytes(&key).is_some() {
@@ -99,13 +99,13 @@ fn create_auction(arg: CreateAuctionArg) -> Result<ByteBuf, String> {
         &canister_text(),
         &auction_id,
         &auth::Action::Create {
-            km_nonce: arg.km_nonce,
+            recipient_nonce: arg.recipient_nonce,
             duration: arg.duration,
             perform_window: arg.perform_window,
-            min_bid: arg.min_bid,
+            min_entry: arg.min_entry,
         },
     );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &arg.km)
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &arg.recipient)
         .map_err(|e| e.text().to_string())?;
 
     let auction = logic::create(
@@ -113,20 +113,20 @@ fn create_auction(arg: CreateAuctionArg) -> Result<ByteBuf, String> {
         &profile(),
         arg.duration,
         arg.perform_window,
-        arg.min_bid,
+        arg.min_entry,
     )
     .map_err(create_error_text)?;
 
     let mut record = crate::AuctionRecord {
         chain: arg.chain,
         auction_id: ByteBuf::from(auction_id.to_vec()),
-        km: arg.km,
-        km_nonce: arg.km_nonce,
+        recipient: arg.recipient,
+        recipient_nonce: arg.recipient_nonce,
         created_at: auction.created_at,
         duration: auction.duration,
         perform_window: auction.perform_window,
         voting_period: auction.voting_period,
-        min_bid: auction.min_bid,
+        min_entry: auction.min_entry,
         state: crate::state_to_view(&auction.state),
         votes: Vec::new(),
         winner_lot: None,
@@ -145,7 +145,7 @@ pub struct GetResolverArg {
 
 /// The RESOLVER birth field for escrows of one lot: the derived Ed25519
 /// pubkey at path [lot_id]. Permissionless and stateless (the Subscription
-/// pattern): a bidder needs it before the lot exists anywhere. An update,
+/// pattern): a donor needs it before the lot exists anywhere. An update,
 /// not a query — threshold derivation is an async management call.
 #[ic_cdk::update]
 async fn get_resolver(arg: GetResolverArg) -> Result<ByteBuf, String> {
@@ -167,7 +167,7 @@ pub struct RegisterEntryArg {
 }
 
 /// Registers one entry: derivation rebuilds the escrow address from the
-/// declared birth fields (km from the record, resolver from [lot_id], the
+/// declared birth fields (recipient from the record, resolver from [lot_id], the
 /// game's fee from config), the chain read confirms the account is real,
 /// and only then the entry joins the leaderboard with the next seq
 /// (docs/game-spec.md §4, §8). Permissionless: registering someone else's
@@ -206,7 +206,7 @@ async fn register_entry(arg: RegisterEntryArg) -> Result<ByteBuf, String> {
     let (escrow, salt) = auth::derive_escrow(
         spec,
         &arg.donor,
-        &record.km,
+        &record.recipient,
         arg.gross,
         arg.deadline,
         &resolver,
@@ -276,7 +276,7 @@ pub struct LotActionArg {
     pub signature: ByteBuf,
 }
 
-/// The KM takes a lot into the race: its text goes public — the server sees
+/// The recipient takes a lot into the race: its text goes public — the server sees
 /// the certified state change and publishes text + text_salt, anyone checks
 /// the hash (docs/game-spec.md §7). BIDDING only, until the last second.
 #[ic_cdk::update]
@@ -295,7 +295,7 @@ fn accept_lot(arg: LotActionArg) -> Result<(), String> {
         &arg.auction_id,
         &auth::Action::Accept { lot },
     );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.recipient)
         .map_err(|e| e.text().to_string())?;
 
     let now = crate::now_seconds();
@@ -319,7 +319,7 @@ fn is_winner(record: &crate::AuctionRecord, lot_id: &[u8]) -> bool {
     record.winner_lot.as_ref().map(|w| w.as_slice()) == Some(lot_id)
 }
 
-/// The KM returns a whole lot: cancel for every entry it has and will ever
+/// The recipient returns a whole lot: cancel for every entry it has and will ever
 /// derive, and no further registrations (docs/game-spec.md §5). In BIDDING
 /// any lot; after the finale only the winner, until "ready" — returning it
 /// kills the auction unsettled, there is no second place.
@@ -339,12 +339,12 @@ fn return_lot(arg: LotActionArg) -> Result<(), String> {
         &arg.auction_id,
         &auth::Action::ReturnLot { lot },
     );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.recipient)
         .map_err(|e| e.text().to_string())?;
 
     let now = crate::now_seconds();
     let action = if is_winner(&record, &lot) {
-        logic::Action::KmReturnWinner
+        logic::Action::RecipientReturnWinner
     } else {
         logic::Action::ReturnLot
     };
@@ -357,7 +357,7 @@ fn return_lot(arg: LotActionArg) -> Result<(), String> {
     }
     lot.returned = Some(crate::ReturnStamp {
         at: now,
-        by: crate::ActorView::Km,
+        by: crate::ActorView::Recipient,
     });
     crate::save_lot(&lkey, &lot);
     Ok(())
@@ -366,7 +366,7 @@ fn return_lot(arg: LotActionArg) -> Result<(), String> {
 /// The platform operator returns a whole lot — the censorship move
 /// (docs/game-spec.md §13). In BIDDING any lot; after the finale only the
 /// winner, from PERFORMING and VOTING alike; a decided lot is out of reach.
-/// The only direction is the bidders' own money back; settle has no such
+/// The only direction is the donors' own money back; settle has no such
 /// door. Attributed forever.
 #[ic_cdk::update]
 fn operator_refund_lot(arg: LotActionArg) -> Result<(), String> {
@@ -430,12 +430,12 @@ pub struct EntryActionArg {
     pub signature: ByteBuf,
 }
 
-/// The KM returns one entry: its escrow gets cancel, the lot stays in the
+/// The recipient returns one entry: its escrow gets cancel, the lot stays in the
 /// race with the rest (docs/game-spec.md §5). The sum and the seq
 /// resolution of the lot lose the entry.
 #[ic_cdk::update]
 fn return_entry(arg: EntryActionArg) -> Result<(), String> {
-    refund_entry(arg, Refunder::Km)
+    refund_entry(arg, logic::Actor::Recipient)
 }
 
 /// The platform operator returns one entry (docs/game-spec.md §13): its
@@ -444,37 +444,30 @@ fn return_entry(arg: EntryActionArg) -> Result<(), String> {
 /// through PERFORMING and VOTING.
 #[ic_cdk::update]
 fn operator_refund_entry(arg: EntryActionArg) -> Result<(), String> {
-    refund_entry(arg, Refunder::Operator)
+    refund_entry(arg, logic::Actor::Operator)
 }
 
 /// Who returns the entry: the two update methods differ only in the signer,
 /// the signed action word and the attribution tag.
-enum Refunder {
-    Km,
-    Operator,
-}
-
-fn refund_entry(arg: EntryActionArg, who: Refunder) -> Result<(), String> {
+fn refund_entry(arg: EntryActionArg, actor: logic::Actor) -> Result<(), String> {
     let akey = crate::auction_key(&arg.chain, &arg.auction_id);
     let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
 
-    let (signer, action, actor, view) = match who {
-        Refunder::Km => (
-            record.km.to_vec(),
+    let (signer, action, view) = match actor {
+        logic::Actor::Recipient => (
+            record.recipient.to_vec(),
             auth::Action::ReturnEntry {
                 escrow: arg.escrow.to_vec(),
             },
-            logic::Actor::Km,
-            crate::ActorView::Km,
+            crate::ActorView::Recipient,
         ),
-        Refunder::Operator => (
+        logic::Actor::Operator => (
             crate::operator_wallet()
                 .ok_or("no operator wallet configured")?
                 .to_vec(),
             auth::Action::OperatorRefundEntry {
                 escrow: arg.escrow.to_vec(),
             },
-            logic::Actor::Operator,
             crate::ActorView::Operator,
         ),
     };
@@ -525,7 +518,7 @@ pub struct AuctionActionArg {
     pub signature: ByteBuf,
 }
 
-/// The KM aborts the whole auction: cancel for every lot, known and never
+/// The recipient aborts the whole auction: cancel for every lot, known and never
 /// registered alike — the auction-level rule resolves them all (game-spec
 /// §8). BIDDING only.
 #[ic_cdk::update]
@@ -539,13 +532,13 @@ fn cancel_auction(arg: AuctionActionArg) -> Result<(), String> {
         &arg.auction_id,
         &auth::Action::Cancel,
     );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.recipient)
         .map_err(|e| e.text().to_string())?;
 
     step_and_save(
         &akey,
         &mut record,
-        logic::Action::KmCancel,
+        logic::Action::RecipientCancel,
         crate::now_seconds(),
     )
 }
@@ -587,8 +580,8 @@ fn operator_cancel_auction(arg: AuctionActionArg) -> Result<(), String> {
     result.map_err(step_error_text)
 }
 
-/// The KM claims the winning condition performed: PERFORMING → VOTING, the
-/// work goes to the community's judgment and the KM's return door closes
+/// The recipient claims the winning condition performed: PERFORMING → VOTING, the
+/// work goes to the community's judgment and the recipient's return door closes
 /// (docs/game-spec.md §5).
 #[ic_cdk::update]
 fn ready(arg: AuctionActionArg) -> Result<(), String> {
@@ -601,7 +594,7 @@ fn ready(arg: AuctionActionArg) -> Result<(), String> {
         &arg.auction_id,
         &auth::Action::Ready,
     );
-    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.km)
+    auth::verify_wallet_signature(message.as_bytes(), &arg.signature, &record.recipient)
         .map_err(|e| e.text().to_string())?;
 
     step_and_save(
@@ -661,7 +654,7 @@ async fn vote(arg: VoteArg) -> Result<(), String> {
         return Err("duplicate voter".to_string());
     }
 
-    let weight = crate::weight::book_value(&arg.chain, &arg.voter, &record.km).await?;
+    let weight = crate::weight::reputation(&arg.chain, &arg.voter, &record.recipient).await?;
 
     // The await yielded: reload the truth and let the machine judge.
     let mut record = crate::load_auction(&akey).ok_or_else(|| "unknown auction".to_string())?;
@@ -743,7 +736,7 @@ fn resolve_outcome(
 }
 
 /// The signature on demand (docs/game-spec.md §8). Permissionless: the
-/// right is the derivation arithmetic — `km` comes from the record, the
+/// right is the derivation arithmetic — `recipient` comes from the record, the
 /// resolver from [lot_id], the fee from config; a foreign declaration
 /// derives an address where no escrow exists, and a signature for it is
 /// harmless. Nothing is stored: a retry re-signs the same recorded
@@ -772,7 +765,7 @@ async fn request_signature(arg: RequestSignatureArg) -> Result<SignedVerdict, St
     let (escrow, _salt) = auth::derive_escrow(
         spec,
         &arg.donor,
-        &record.km,
+        &record.recipient,
         arg.gross,
         arg.deadline,
         &resolver,
@@ -877,13 +870,13 @@ mod tests {
         crate::AuctionRecord {
             chain: "solana-devnet".to_string(),
             auction_id: ByteBuf::from(vec![0xAA; 32]),
-            km: ByteBuf::from(vec![0x22; 32]),
-            km_nonce: 1,
+            recipient: ByteBuf::from(vec![0x22; 32]),
+            recipient_nonce: 1,
             created_at: 0,
             duration: 60,
             perform_window: 60,
             voting_period: 60,
-            min_bid: 0,
+            min_entry: 0,
             state,
             votes: Vec::new(),
             winner_lot: winner_lot.map(|w| ByteBuf::from(w.to_vec())),
@@ -899,7 +892,7 @@ mod tests {
             accepted_at: Some(1),
             returned: returned.then_some(crate::ReturnStamp {
                 at: 2,
-                by: crate::ActorView::Km,
+                by: crate::ActorView::Recipient,
             }),
             sum: 1,
             entries: 1,

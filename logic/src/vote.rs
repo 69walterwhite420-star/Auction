@@ -10,14 +10,14 @@ pub const MIN_VOTE_WEIGHT: u128 = 100_000;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Voter(pub Vec<u8>);
 
-/// What the voter asserts about the winning condition the KM claimed done.
+/// What the voter asserts about the winning condition the recipient claimed done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
     Done,
     NotDone,
 }
 
-/// One recorded vote. `weight` is book[(chain, voter, km)] at the moment
+/// One recorded vote. `weight` is book[(chain, voter, recipient)] at the moment
 /// the vote was processed — there is no snapshot (game-spec §10).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vote {

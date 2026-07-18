@@ -32,22 +32,22 @@ fn winner_lot(s: &Setup, auction_id: &[u8]) -> Option<Vec<u8>> {
 #[ignore]
 fn finale_picks_the_richest_accepted_lot() {
     let s = setup();
-    let km = wallet(0x10);
-    let auction_id = create_auction(&s, &km, 1).expect("create");
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
 
     // A: 1.5M over two entries, accepted. B: 2M, accepted. C: 3M, never
     // accepted — the richest money loses to the richest *accepted* money.
-    let a1 = plant_bid(&s, &auction_id, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &auction_id, &a1).expect("register");
-    let a2 = plant_bid(&s, &auction_id, &km, 0x22, TEXT_A, 500_000, deadline, 2);
-    register_bid(&s, &auction_id, &a2).expect("register");
-    let b = plant_bid(&s, &auction_id, &km, 0x23, TEXT_B, 2_000_000, deadline, 3);
-    register_bid(&s, &auction_id, &b).expect("register");
-    let c = plant_bid(&s, &auction_id, &km, 0x24, TEXT_C, 3_000_000, deadline, 4);
-    register_bid(&s, &auction_id, &c).expect("register");
-    accept_lot(&s, &auction_id, a1.lot_id, &km).expect("accept A");
-    accept_lot(&s, &auction_id, b.lot_id, &km).expect("accept B");
+    let a1 = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &auction_id, &a1).expect("register");
+    let a2 = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_A, 500_000, deadline, 2);
+    register_entry(&s, &auction_id, &a2).expect("register");
+    let b = plant_entry(&s, &auction_id, &recipient, 0x23, TEXT_B, 2_000_000, deadline, 3);
+    register_entry(&s, &auction_id, &b).expect("register");
+    let c = plant_entry(&s, &auction_id, &recipient, 0x24, TEXT_C, 3_000_000, deadline, 4);
+    register_entry(&s, &auction_id, &c).expect("register");
+    accept_lot(&s, &auction_id, a1.lot_id, &recipient).expect("accept A");
+    accept_lot(&s, &auction_id, b.lot_id, &recipient).expect("accept B");
 
     advance(&s, DURATION);
     assert_eq!(state_of(&s, &auction_id), StateView::Performing);
@@ -71,34 +71,34 @@ fn finale_picks_the_richest_accepted_lot() {
 #[ignore]
 fn finale_tie_goes_to_the_earliest_composition() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
 
     // Auction 1: A reaches 300k first (seq 1); B assembles the same sum
     // later (seqs 2, 3). A wins the tie.
-    let auction_a = create_auction(&s, &km, 1).expect("create");
+    let auction_a = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_a));
-    let a = plant_bid(&s, &auction_a, &km, 0x21, TEXT_A, 300_000, deadline, 1);
-    register_bid(&s, &auction_a, &a).expect("register");
-    let b1 = plant_bid(&s, &auction_a, &km, 0x22, TEXT_B, 100_000, deadline, 2);
-    register_bid(&s, &auction_a, &b1).expect("register");
-    let b2 = plant_bid(&s, &auction_a, &km, 0x23, TEXT_B, 200_000, deadline, 3);
-    register_bid(&s, &auction_a, &b2).expect("register");
-    accept_lot(&s, &auction_a, a.lot_id, &km).expect("accept");
-    accept_lot(&s, &auction_a, b1.lot_id, &km).expect("accept");
+    let a = plant_entry(&s, &auction_a, &recipient, 0x21, TEXT_A, 300_000, deadline, 1);
+    register_entry(&s, &auction_a, &a).expect("register");
+    let b1 = plant_entry(&s, &auction_a, &recipient, 0x22, TEXT_B, 100_000, deadline, 2);
+    register_entry(&s, &auction_a, &b1).expect("register");
+    let b2 = plant_entry(&s, &auction_a, &recipient, 0x23, TEXT_B, 200_000, deadline, 3);
+    register_entry(&s, &auction_a, &b2).expect("register");
+    accept_lot(&s, &auction_a, a.lot_id, &recipient).expect("accept");
+    accept_lot(&s, &auction_a, b1.lot_id, &recipient).expect("accept");
     advance(&s, DURATION);
     assert_eq!(winner_lot(&s, &auction_a), Some(a.lot_id.to_vec()));
 
     // Auction 2: the same composition, but A's entry is returned before the
     // finale — B stands alone and wins.
-    let auction_b = create_auction(&s, &km, 2).expect("create");
+    let auction_b = create_auction(&s, &recipient, 2).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_b));
-    let a = plant_bid(&s, &auction_b, &km, 0x31, TEXT_A, 300_000, deadline, 1);
-    register_bid(&s, &auction_b, &a).expect("register");
-    let b = plant_bid(&s, &auction_b, &km, 0x32, TEXT_B, 300_000, deadline, 2);
-    register_bid(&s, &auction_b, &b).expect("register");
-    accept_lot(&s, &auction_b, a.lot_id, &km).expect("accept");
-    accept_lot(&s, &auction_b, b.lot_id, &km).expect("accept");
-    return_entry(&s, &auction_b, &a.escrow, &km).expect("return");
+    let a = plant_entry(&s, &auction_b, &recipient, 0x31, TEXT_A, 300_000, deadline, 1);
+    register_entry(&s, &auction_b, &a).expect("register");
+    let b = plant_entry(&s, &auction_b, &recipient, 0x32, TEXT_B, 300_000, deadline, 2);
+    register_entry(&s, &auction_b, &b).expect("register");
+    accept_lot(&s, &auction_b, a.lot_id, &recipient).expect("accept");
+    accept_lot(&s, &auction_b, b.lot_id, &recipient).expect("accept");
+    return_entry(&s, &auction_b, &a.escrow, &recipient).expect("return");
     advance(&s, DURATION);
     assert_eq!(winner_lot(&s, &auction_b), Some(b.lot_id.to_vec()));
 }
@@ -107,29 +107,29 @@ fn finale_tie_goes_to_the_earliest_composition() {
 #[ignore]
 fn finale_without_candidates_dies_unwon() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
 
     // (a) No lots at all.
-    let empty = create_auction(&s, &km, 1).expect("create");
+    let empty = create_auction(&s, &recipient, 1).expect("create");
     // (b) Registered but never accepted.
-    let unaccepted = create_auction(&s, &km, 2).expect("create");
+    let unaccepted = create_auction(&s, &recipient, 2).expect("create");
     let deadline = good_deadline(created_at(&s, &unaccepted));
-    let bid = plant_bid(&s, &unaccepted, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &unaccepted, &bid).expect("register");
+    let entry = plant_entry(&s, &unaccepted, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &unaccepted, &entry).expect("register");
     // (c) Accepted, then the whole lot returned.
-    let returned = create_auction(&s, &km, 3).expect("create");
+    let returned = create_auction(&s, &recipient, 3).expect("create");
     let deadline = good_deadline(created_at(&s, &returned));
-    let bid_c = plant_bid(&s, &returned, &km, 0x22, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &returned, &bid_c).expect("register");
-    accept_lot(&s, &returned, bid_c.lot_id, &km).expect("accept");
-    return_lot(&s, &returned, bid_c.lot_id, &km).expect("return");
+    let entry_c = plant_entry(&s, &returned, &recipient, 0x22, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &returned, &entry_c).expect("register");
+    accept_lot(&s, &returned, entry_c.lot_id, &recipient).expect("accept");
+    return_lot(&s, &returned, entry_c.lot_id, &recipient).expect("return");
     // (d) Accepted, but every entry individually returned: zero stands.
-    let drained = create_auction(&s, &km, 4).expect("create");
+    let drained = create_auction(&s, &recipient, 4).expect("create");
     let deadline = good_deadline(created_at(&s, &drained));
-    let bid_d = plant_bid(&s, &drained, &km, 0x23, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &drained, &bid_d).expect("register");
-    accept_lot(&s, &drained, bid_d.lot_id, &km).expect("accept");
-    return_entry(&s, &drained, &bid_d.escrow, &km).expect("return");
+    let entry_d = plant_entry(&s, &drained, &recipient, 0x23, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &drained, &entry_d).expect("register");
+    accept_lot(&s, &drained, entry_d.lot_id, &recipient).expect("accept");
+    return_entry(&s, &drained, &entry_d.escrow, &recipient).expect("return");
 
     advance(&s, DURATION);
     for auction_id in [&empty, &unaccepted, &returned, &drained] {
@@ -141,9 +141,9 @@ fn finale_without_candidates_dies_unwon() {
     }
 
     // Every deriving escrow of a dead auction resolves to cancel.
-    let verdict = request_signature(&s, &unaccepted, &bid).expect("cancel signs");
+    let verdict = request_signature(&s, &unaccepted, &entry).expect("cancel signs");
     assert_eq!(verdict.outcome, OutcomeView::Cancel);
-    verify_verdict(&bid.resolver, &bid.escrow, 1, &verdict.signature);
+    verify_verdict(&entry.resolver, &entry.escrow, 1, &verdict.signature);
 }
 
 #[test]
@@ -152,8 +152,8 @@ fn finale_survives_a_burst_of_lots() {
     // More entries than one scan slice folds: the finale must span ticks
     // and still pick the exact maximum.
     let s = setup();
-    let km = wallet(0x10);
-    let auction_id = create_auction(&s, &km, 1).expect("create");
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
 
     let mut best_lot = None;
@@ -162,20 +162,20 @@ fn finale_survives_a_burst_of_lots() {
         text[..8].copy_from_slice(&i.to_le_bytes());
         text[31] = 0x77;
         let gross = 100_000 + i * 1_000;
-        let bid = plant_bid(
+        let entry = plant_entry(
             &s,
             &auction_id,
-            &km,
+            &recipient,
             (0x20 + (i % 200)) as u8,
             text,
             gross,
             deadline,
             i,
         );
-        register_bid(&s, &auction_id, &bid).expect("register");
-        accept_lot(&s, &auction_id, bid.lot_id, &km).expect("accept");
+        register_entry(&s, &auction_id, &entry).expect("register");
+        accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
         if i == 54 {
-            best_lot = Some(bid.lot_id.to_vec());
+            best_lot = Some(entry.lot_id.to_vec());
         }
     }
 
@@ -187,15 +187,15 @@ fn finale_survives_a_burst_of_lots() {
 // ---- ready and voting ----------------------------------------------------------
 
 /// A winner-in-performing auction: two lots, B the richer, both accepted.
-fn performing(s: &Setup, km: &Wallet, km_nonce: u64) -> (Vec<u8>, Bid, Bid) {
-    let auction_id = create_auction(s, km, km_nonce).expect("create");
+fn performing(s: &Setup, recipient: &Wallet, recipient_nonce: u64) -> (Vec<u8>, Entry, Entry) {
+    let auction_id = create_auction(s, recipient, recipient_nonce).expect("create");
     let deadline = good_deadline(created_at(s, &auction_id));
-    let loser = plant_bid(s, &auction_id, km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(s, &auction_id, &loser).expect("register");
-    let winner = plant_bid(s, &auction_id, km, 0x22, TEXT_B, 2_000_000, deadline, 2);
-    register_bid(s, &auction_id, &winner).expect("register");
-    accept_lot(s, &auction_id, loser.lot_id, km).expect("accept");
-    accept_lot(s, &auction_id, winner.lot_id, km).expect("accept");
+    let loser = plant_entry(s, &auction_id, recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(s, &auction_id, &loser).expect("register");
+    let winner = plant_entry(s, &auction_id, recipient, 0x22, TEXT_B, 2_000_000, deadline, 2);
+    register_entry(s, &auction_id, &winner).expect("register");
+    accept_lot(s, &auction_id, loser.lot_id, recipient).expect("accept");
+    accept_lot(s, &auction_id, winner.lot_id, recipient).expect("accept");
     advance(s, DURATION);
     assert_eq!(state_of(s, &auction_id), StateView::Performing);
     (auction_id, winner, loser)
@@ -205,21 +205,21 @@ fn performing(s: &Setup, km: &Wallet, km_nonce: u64) -> (Vec<u8>, Bid, Bid) {
 #[ignore]
 fn ready_opens_voting_and_votes_settle() {
     let s = setup();
-    let km = wallet(0x10);
-    let (auction_id, winner, loser) = performing(&s, &km, 1);
+    let recipient = wallet(0x10);
+    let (auction_id, winner, loser) = performing(&s, &recipient, 1);
 
     let stranger = wallet(0x66);
     assert_eq!(
         ready(&s, &auction_id, &stranger).unwrap_err(),
         "bad signature"
     );
-    ready(&s, &auction_id, &km).expect("ready");
+    ready(&s, &auction_id, &recipient).expect("ready");
     assert!(matches!(
         state_of(&s, &auction_id),
         StateView::Voting { .. }
     ));
     assert_eq!(
-        ready(&s, &auction_id, &km).unwrap_err(),
+        ready(&s, &auction_id, &recipient).unwrap_err(),
         "invalid transition"
     );
 
@@ -227,9 +227,9 @@ fn ready_opens_voting_and_votes_settle() {
     let yes = wallet(0x41);
     let no = wallet(0x42);
     let featherweight = wallet(0x43);
-    seed_reputation(&s, &yes.address, &km.address, 500_000);
-    seed_reputation(&s, &no.address, &km.address, 200_000);
-    seed_reputation(&s, &featherweight.address, &km.address, 99_999);
+    seed_reputation(&s, &yes.address, &recipient.address, 500_000);
+    seed_reputation(&s, &no.address, &recipient.address, 200_000);
+    seed_reputation(&s, &featherweight.address, &recipient.address, 99_999);
     vote(&s, &auction_id, &yes, ChoiceView::Done).expect("vote done");
     vote(&s, &auction_id, &no, ChoiceView::NotDone).expect("vote not_done");
     assert_eq!(
@@ -266,7 +266,7 @@ fn ready_opens_voting_and_votes_settle() {
 
     // The verdict is untouchable: no return moves it.
     assert_eq!(
-        return_lot(&s, &auction_id, winner.lot_id, &km).unwrap_err(),
+        return_lot(&s, &auction_id, winner.lot_id, &recipient).unwrap_err(),
         "invalid transition"
     );
     assert_eq!(
@@ -279,11 +279,11 @@ fn ready_opens_voting_and_votes_settle() {
 #[ignore]
 fn silence_and_dissent_cancel() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
 
     // Silence: nobody voted.
-    let (auction_a, winner_a, _) = performing(&s, &km, 1);
-    ready(&s, &auction_a, &km).expect("ready");
+    let (auction_a, winner_a, _) = performing(&s, &recipient, 1);
+    ready(&s, &auction_a, &recipient).expect("ready");
     advance(&s, VOTING_PERIOD);
     assert_eq!(
         state_of(&s, &auction_a),
@@ -296,12 +296,12 @@ fn silence_and_dissent_cancel() {
     verify_verdict(&winner_a.resolver, &winner_a.escrow, 1, &verdict.signature);
 
     // Dissent: the weighted "not done" outweighs.
-    let (auction_b, _, _) = performing(&s, &km, 2);
-    ready(&s, &auction_b, &km).expect("ready");
+    let (auction_b, _, _) = performing(&s, &recipient, 2);
+    ready(&s, &auction_b, &recipient).expect("ready");
     let yes = wallet(0x41);
     let no = wallet(0x42);
-    seed_reputation(&s, &yes.address, &km.address, 200_000);
-    seed_reputation(&s, &no.address, &km.address, 200_001);
+    seed_reputation(&s, &yes.address, &recipient.address, 200_000);
+    seed_reputation(&s, &no.address, &recipient.address, 200_001);
     vote(&s, &auction_b, &yes, ChoiceView::Done).expect("vote");
     vote(&s, &auction_b, &no, ChoiceView::NotDone).expect("vote");
     advance(&s, VOTING_PERIOD);
@@ -314,7 +314,7 @@ fn silence_and_dissent_cancel() {
 
     // Late vote: the tally happened first.
     let late = wallet(0x44);
-    seed_reputation(&s, &late.address, &km.address, 900_000);
+    seed_reputation(&s, &late.address, &recipient.address, 900_000);
     assert_eq!(
         vote(&s, &auction_b, &late, ChoiceView::Done).unwrap_err(),
         "invalid transition"
@@ -325,8 +325,8 @@ fn silence_and_dissent_cancel() {
 #[ignore]
 fn perform_expiry_cancels_the_winner() {
     let s = setup();
-    let km = wallet(0x10);
-    let (auction_id, winner, _) = performing(&s, &km, 1);
+    let recipient = wallet(0x10);
+    let (auction_id, winner, _) = performing(&s, &recipient, 1);
 
     advance(&s, PERFORM_WINDOW);
     assert_eq!(
@@ -336,7 +336,7 @@ fn perform_expiry_cancels_the_winner() {
         }
     );
     assert_eq!(
-        ready(&s, &auction_id, &km).unwrap_err(),
+        ready(&s, &auction_id, &recipient).unwrap_err(),
         "invalid transition"
     );
     let verdict = request_signature(&s, &auction_id, &winner).expect("cancel signs");
@@ -345,13 +345,13 @@ fn perform_expiry_cancels_the_winner() {
 
 #[test]
 #[ignore]
-fn km_returns_the_winner_before_ready_only() {
+fn recipient_returns_the_winner_before_ready_only() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
 
     // Before "ready": the auction dies unsettled, the lot is stamped.
-    let (auction_a, winner_a, _) = performing(&s, &km, 1);
-    return_lot(&s, &auction_a, winner_a.lot_id, &km).expect("return winner");
+    let (auction_a, winner_a, _) = performing(&s, &recipient, 1);
+    return_lot(&s, &auction_a, winner_a.lot_id, &recipient).expect("return winner");
     assert_eq!(
         state_of(&s, &auction_a),
         StateView::Done {
@@ -359,15 +359,15 @@ fn km_returns_the_winner_before_ready_only() {
         }
     );
     let lot = lot_state(&fetch_lot(&s, &auction_a, &winner_a.lot_id));
-    assert_eq!(lot.returned.expect("stamped").by, ActorView::Km);
+    assert_eq!(lot.returned.expect("stamped").by, ActorView::Recipient);
     let verdict = request_signature(&s, &auction_a, &winner_a).expect("cancel signs");
     assert_eq!(verdict.outcome, OutcomeView::Cancel);
 
-    // After "ready" the KM's door is closed.
-    let (auction_b, winner_b, _) = performing(&s, &km, 2);
-    ready(&s, &auction_b, &km).expect("ready");
+    // After "ready" the recipient's door is closed.
+    let (auction_b, winner_b, _) = performing(&s, &recipient, 2);
+    ready(&s, &auction_b, &recipient).expect("ready");
     assert_eq!(
-        return_lot(&s, &auction_b, winner_b.lot_id, &km).unwrap_err(),
+        return_lot(&s, &auction_b, winner_b.lot_id, &recipient).unwrap_err(),
         "invalid transition"
     );
 }
@@ -378,28 +378,28 @@ fn km_returns_the_winner_before_ready_only() {
 #[ignore]
 fn operator_returns_lots_entries_and_the_winner() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
     let stranger = wallet(0x66);
 
     // In BIDDING: any lot, stamped with the operator's attribution.
-    let auction_a = create_auction(&s, &km, 1).expect("create");
+    let auction_a = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_a));
-    let bid = plant_bid(&s, &auction_a, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &auction_a, &bid).expect("register");
+    let entry = plant_entry(&s, &auction_a, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &auction_a, &entry).expect("register");
     assert_eq!(
-        operator_refund_lot(&s, &auction_a, bid.lot_id, &stranger).unwrap_err(),
+        operator_refund_lot(&s, &auction_a, entry.lot_id, &stranger).unwrap_err(),
         "bad signature"
     );
-    operator_refund_lot(&s, &auction_a, bid.lot_id, &operator()).expect("operator returns");
-    let lot = lot_state(&fetch_lot(&s, &auction_a, &bid.lot_id));
+    operator_refund_lot(&s, &auction_a, entry.lot_id, &operator()).expect("operator returns");
+    let lot = lot_state(&fetch_lot(&s, &auction_a, &entry.lot_id));
     assert_eq!(lot.returned.expect("stamped").by, ActorView::Operator);
 
     // The winner during VOTING: the auction dies, votes stay published,
     // the move is attributed at auction level.
-    let (auction_b, winner_b, _) = performing(&s, &km, 2);
-    ready(&s, &auction_b, &km).expect("ready");
+    let (auction_b, winner_b, _) = performing(&s, &recipient, 2);
+    ready(&s, &auction_b, &recipient).expect("ready");
     let yes = wallet(0x41);
-    seed_reputation(&s, &yes.address, &km.address, 500_000);
+    seed_reputation(&s, &yes.address, &recipient.address, 500_000);
     vote(&s, &auction_b, &yes, ChoiceView::Done).expect("vote");
     operator_refund_lot(&s, &auction_b, winner_b.lot_id, &operator()).expect("operator");
     let record = auction_state(&fetch_auction(&s, &auction_b));
@@ -415,17 +415,17 @@ fn operator_returns_lots_entries_and_the_winner() {
     // One entry of the winner during PERFORMING: the entry gets cancel and
     // keeps it even when the lot later settles. The top-up registered while
     // bidding still ran — the registry closes at the finale.
-    let auction_c = create_auction(&s, &km, 3).expect("create");
+    let auction_c = create_auction(&s, &recipient, 3).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_c));
-    let winner_c = plant_bid(&s, &auction_c, &km, 0x33, TEXT_B, 2_000_000, deadline, 1);
-    register_bid(&s, &auction_c, &winner_c).expect("register");
-    let topup = plant_bid(&s, &auction_c, &km, 0x35, TEXT_B, 300_000, deadline, 2);
-    register_bid(&s, &auction_c, &topup).expect("register");
-    accept_lot(&s, &auction_c, winner_c.lot_id, &km).expect("accept");
+    let winner_c = plant_entry(&s, &auction_c, &recipient, 0x33, TEXT_B, 2_000_000, deadline, 1);
+    register_entry(&s, &auction_c, &winner_c).expect("register");
+    let topup = plant_entry(&s, &auction_c, &recipient, 0x35, TEXT_B, 300_000, deadline, 2);
+    register_entry(&s, &auction_c, &topup).expect("register");
+    accept_lot(&s, &auction_c, winner_c.lot_id, &recipient).expect("accept");
     advance(&s, DURATION);
     assert_eq!(state_of(&s, &auction_c), StateView::Performing);
     operator_refund_entry(&s, &auction_c, &topup.escrow, &operator()).expect("operator entry");
-    ready(&s, &auction_c, &km).expect("ready");
+    ready(&s, &auction_c, &recipient).expect("ready");
     vote(&s, &auction_c, &yes, ChoiceView::Done).expect("vote");
     advance(&s, VOTING_PERIOD);
     assert_eq!(
@@ -448,27 +448,27 @@ fn operator_returns_lots_entries_and_the_winner() {
 #[ignore]
 fn signatures_wait_for_verdicts_and_cover_unknown_lots() {
     let s = setup();
-    let km = wallet(0x10);
-    let auction_id = create_auction(&s, &km, 1).expect("create");
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let bid = plant_bid(&s, &auction_id, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &auction_id, &bid).expect("register");
-    accept_lot(&s, &auction_id, bid.lot_id, &km).expect("accept");
+    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &auction_id, &entry).expect("register");
+    accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
 
     // No verdict while bidding runs; unknown auctions error.
     assert_eq!(
-        request_signature(&s, &auction_id, &bid).unwrap_err(),
+        request_signature(&s, &auction_id, &entry).unwrap_err(),
         "no verdict yet"
     );
     assert_eq!(
-        request_signature_raw(&s, &[0x0D; 32], &TEXT_A, &bid.donor.address, 1, deadline, 1)
+        request_signature_raw(&s, &[0x0D; 32], &TEXT_A, &entry.donor.address, 1, deadline, 1)
             .unwrap_err(),
         "unknown auction"
     );
 
-    // The KM cancels the whole auction: even a lot the registry never heard
+    // The recipient cancels the whole auction: even a lot the registry never heard
     // of resolves to cancel — unregistered means unaccepted means lost.
-    cancel_auction(&s, &auction_id, &km).expect("cancel");
+    cancel_auction(&s, &auction_id, &recipient).expect("cancel");
     let ghost_donor = wallet(0x77);
     let ghost = request_signature_raw(
         &s,
@@ -507,14 +507,14 @@ fn signatures_wait_for_verdicts_and_cover_unknown_lots() {
 #[ignore]
 fn operator_cancels_running_bidding_altogether() {
     let s = setup();
-    let km = wallet(0x10);
+    let recipient = wallet(0x10);
     let stranger = wallet(0x66);
 
-    let auction_id = create_auction(&s, &km, 1).expect("create");
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
     let deadline = good_deadline(created_at(&s, &auction_id));
-    let bid = plant_bid(&s, &auction_id, &km, 0x21, TEXT_A, 1_000_000, deadline, 1);
-    register_bid(&s, &auction_id, &bid).expect("register");
-    accept_lot(&s, &auction_id, bid.lot_id, &km).expect("accept");
+    let entry = plant_entry(&s, &auction_id, &recipient, 0x21, TEXT_A, 1_000_000, deadline, 1);
+    register_entry(&s, &auction_id, &entry).expect("register");
+    accept_lot(&s, &auction_id, entry.lot_id, &recipient).expect("accept");
 
     assert_eq!(
         operator_cancel_auction(&s, &auction_id, &stranger).unwrap_err(),
@@ -527,14 +527,14 @@ fn operator_cancels_running_bidding_altogether() {
 
     // The dead auction takes nothing and every lot resolves to cancel —
     // the registered one and one the registry never heard of alike.
-    let late = plant_bid(&s, &auction_id, &km, 0x22, TEXT_B, 500_000, deadline, 2);
+    let late = plant_entry(&s, &auction_id, &recipient, 0x22, TEXT_B, 500_000, deadline, 2);
     assert_eq!(
-        register_bid(&s, &auction_id, &late).unwrap_err(),
+        register_entry(&s, &auction_id, &late).unwrap_err(),
         "invalid transition"
     );
-    let verdict = request_signature(&s, &auction_id, &bid).expect("cancel signs");
+    let verdict = request_signature(&s, &auction_id, &entry).expect("cancel signs");
     assert_eq!(verdict.outcome, OutcomeView::Cancel);
-    verify_verdict(&bid.resolver, &bid.escrow, 1, &verdict.signature);
+    verify_verdict(&entry.resolver, &entry.escrow, 1, &verdict.signature);
     let ghost = request_signature(&s, &auction_id, &late).expect("ghost lot cancel signs");
     assert_eq!(ghost.outcome, OutcomeView::Cancel);
     assert_eq!(
@@ -544,7 +544,7 @@ fn operator_cancels_running_bidding_altogether() {
 
     // After the finale the whole-auction door is closed: the operator kills
     // an auction by returning its winner instead.
-    let (auction_b, _, _) = performing(&s, &km, 2);
+    let (auction_b, _, _) = performing(&s, &recipient, 2);
     assert_eq!(
         operator_cancel_auction(&s, &auction_b, &operator()).unwrap_err(),
         "invalid transition"

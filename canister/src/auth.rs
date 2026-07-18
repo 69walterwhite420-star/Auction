@@ -1,5 +1,5 @@
 //! Authorization is a wallet signature, never the calling principal
-//! (docs/game-spec.md §6): the message layout the KM and voters sign, its
+//! (docs/game-spec.md §6): the message layout the recipient and voters sign, its
 //! verification, and the derivations that key auctions, name lot resolver
 //! paths and rebuild escrow addresses.
 //!
@@ -49,10 +49,10 @@ impl Choice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Create {
-        km_nonce: u64,
+        recipient_nonce: u64,
         duration: u64,
         perform_window: u64,
-        min_bid: u64,
+        min_entry: u64,
     },
     Accept {
         lot: [u8; 32],
@@ -137,7 +137,7 @@ pub fn spec_of(chain: &str) -> Result<&'static ChainSpec, AuthError> {
 ///
 /// The first five lines — domain, `action:`, `chain:`, `canister:`,
 /// `auction:` — open every action except `create`, which has no `auction:`
-/// line (the id derives from its `km_nonce:`). `accept`, `return-lot` and
+/// line (the id derives from its `recipient_nonce:`). `accept`, `return-lot` and
 /// `operator-refund-lot` add `lot:` (hex); `return-entry` and
 /// `operator-refund-entry` add `escrow:` (base58); `vote` adds `choice:`;
 /// `cancel`, `ready` and `operator-cancel` add nothing.
@@ -165,15 +165,15 @@ pub fn auction_message(
     }
     match action {
         Action::Create {
-            km_nonce,
+            recipient_nonce,
             duration,
             perform_window,
-            min_bid,
+            min_entry,
         } => {
-            out.push_str(&format!("km_nonce: {km_nonce}\n"));
+            out.push_str(&format!("recipient_nonce: {recipient_nonce}\n"));
             out.push_str(&format!("duration: {duration}\n"));
             out.push_str(&format!("perform_window: {perform_window}\n"));
-            out.push_str(&format!("min_bid: {min_bid}\n"));
+            out.push_str(&format!("min_entry: {min_entry}\n"));
         }
         Action::Accept { lot } | Action::ReturnLot { lot } | Action::OperatorRefundLot { lot } => {
             out.push_str(&format!("lot: {}\n", hex(lot)));
@@ -193,17 +193,17 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// auction_id = sha256(TAG ‖ len(canister_id) u8 ‖ canister_id ‖ km ‖
-/// km_nonce_le) — deterministic, published in the auction's link, the key of
+/// auction_id = sha256(TAG ‖ len(canister_id) u8 ‖ canister_id ‖ recipient ‖
+/// recipient_nonce_le) — deterministic, published in the auction's link, the key of
 /// the auction and the first half of every lot_id (game-spec §2). The
 /// principal is length-prefixed: principals vary in length, so the encoding
 /// must be injective.
 pub fn derive_auction_id(
     canister_id: &[u8],
-    km: &[u8],
-    km_nonce: u64,
+    recipient: &[u8],
+    recipient_nonce: u64,
 ) -> Result<[u8; 32], AuthError> {
-    let km: [u8; 32] = km.try_into().map_err(|_| AuthError::BadFieldLength)?;
+    let recipient: [u8; 32] = recipient.try_into().map_err(|_| AuthError::BadFieldLength)?;
     let len: u8 = canister_id
         .len()
         .try_into()
@@ -212,8 +212,8 @@ pub fn derive_auction_id(
     hasher.update(AUCTION_TAG);
     hasher.update([len]);
     hasher.update(canister_id);
-    hasher.update(km);
-    hasher.update(km_nonce.to_le_bytes());
+    hasher.update(recipient);
+    hasher.update(recipient_nonce.to_le_bytes());
     Ok(hasher.finalize().into())
 }
 
@@ -236,21 +236,21 @@ pub fn derive_lot_id(auction_id: &[u8], text_hash: &[u8]) -> Result<[u8; 32], Au
 
 /// The escrow address of one entry, derived from the declared birth fields
 /// with the same arithmetic the core's indexer uses (game-spec §8,
-/// factory-spec §4). `km` and `resolver` come from the auction record and
+/// factory-spec §4). `recipient` and `resolver` come from the auction record and
 /// the lot derivation, never from the requester. Returns the address and
 /// the salt — registration compares the salt against the on-chain account
 /// (game-spec §4).
 pub fn derive_escrow(
     spec: &ChainSpec,
     donor: &[u8],
-    km: &[u8],
+    recipient: &[u8],
     gross: u64,
     deadline: u64,
     resolver: &[u8],
     nonce: u64,
 ) -> Result<(Vec<u8>, [u8; 32]), AuthError> {
     let donor: [u8; 32] = donor.try_into().map_err(|_| AuthError::BadFieldLength)?;
-    let km: [u8; 32] = km.try_into().map_err(|_| AuthError::BadFieldLength)?;
+    let recipient: [u8; 32] = recipient.try_into().map_err(|_| AuthError::BadFieldLength)?;
     let resolver: [u8; 32] = resolver.try_into().map_err(|_| AuthError::BadFieldLength)?;
     // The on-chain program takes deadline as i64; out-of-range is caught here.
     let deadline = i64::try_from(deadline).map_err(|_| AuthError::DeadlineOverflow)?;
@@ -263,10 +263,10 @@ pub fn derive_escrow(
         .ok_or(AuthError::MalformedConfig)?;
     // The shape owns its byte format: `crown-salt` is the single offchain
     // definition of the salt, parity-tested against the deployed program's
-    // `birth_salt`. The km is the streamer of every escrow in the auction.
+    // `birth_salt`. The recipient is the recipient of every escrow in the auction.
     let salt = crown_salt::two_outcome::salt(
         &donor,
-        &km,
+        &recipient,
         gross,
         deadline,
         &resolver,
@@ -401,10 +401,10 @@ mod tests {
                 CANISTER,
                 &AUCTION,
                 &Action::Create {
-                    km_nonce: 7,
+                    recipient_nonce: 7,
                     duration: 86_400,
                     perform_window: 43_200,
-                    min_bid: 50,
+                    min_entry: 50,
                 },
             ),
             format!(
@@ -412,10 +412,10 @@ mod tests {
                  action: create\n\
                  chain: solana-devnet\n\
                  canister: {CANISTER}\n\
-                 km_nonce: 7\n\
+                 recipient_nonce: 7\n\
                  duration: 86400\n\
                  perform_window: 43200\n\
-                 min_bid: 50\n"
+                 min_entry: 50\n"
             )
         );
     }
@@ -590,10 +590,10 @@ mod tests {
                 CANISTER,
                 &[0xFF; 32],
                 &Action::Create {
-                    km_nonce: u64::MAX,
+                    recipient_nonce: u64::MAX,
                     duration: u64::MAX,
                     perform_window: u64::MAX,
-                    min_bid: u64::MAX,
+                    min_entry: u64::MAX,
                 },
             ),
             auction_message(
@@ -655,10 +655,10 @@ mod tests {
                 CANISTER,
                 &AUCTION,
                 &Action::Create {
-                    km_nonce: 1,
+                    recipient_nonce: 1,
                     duration: 60,
                     perform_window: 60,
-                    min_bid: 0,
+                    min_entry: 0,
                 },
             ),
             auction_message(
@@ -666,10 +666,10 @@ mod tests {
                 CANISTER,
                 &AUCTION,
                 &Action::Create {
-                    km_nonce: 2,
+                    recipient_nonce: 2,
                     duration: 60,
                     perform_window: 60,
-                    min_bid: 0,
+                    min_entry: 0,
                 },
             ),
             auction_message("solana-devnet", CANISTER, &AUCTION, &Action::Ready),
@@ -839,7 +839,7 @@ mod tests {
     }
 
     // Frozen cross-tool vector: salt is sha256 over the exact byte concat,
-    // computed independently with python3 hashlib over donor ‖ km ‖
+    // computed independently with python3 hashlib over donor ‖ recipient ‖
     // u64le(1000000) ‖ i64le(1900000000) ‖ resolver ‖ u16le(500) ‖ fee_wallet
     // ‖ u64le(7); the PDA arithmetic itself is parity-tested in crown-derive.
     const SALT_VECTOR: &str = "149c82b09a080ef4c92921d13d974177bfea2dd546ef8b798627e3e4245afe6b";
@@ -847,10 +847,10 @@ mod tests {
     #[test]
     fn escrow_matches_reference_salt() {
         let donor = [0x11; 32];
-        let km = [0x22; 32];
+        let recipient = [0x22; 32];
         let resolver = [0x33; 32];
         let (escrow, salt) =
-            derive_escrow(&spec(), &donor, &km, 1_000_000, 1_900_000_000, &resolver, 7).unwrap();
+            derive_escrow(&spec(), &donor, &recipient, 1_000_000, 1_900_000_000, &resolver, 7).unwrap();
         assert_eq!(salt.to_vec(), unhex(SALT_VECTOR));
 
         let program: [u8; 32] = bs58::decode(spec().factory)

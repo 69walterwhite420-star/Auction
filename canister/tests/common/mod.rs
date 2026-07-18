@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 pub const CHAIN: &str = "solana-devnet";
 pub const DURATION: u64 = 86_400;
 pub const PERFORM_WINDOW: u64 = 43_200;
-pub const MIN_BID: u64 = 50;
+pub const MIN_ENTRY: u64 = 50;
 /// Mirrors config/testnet.toml — the profile the test wasm is baked with.
 pub const VOTING_PERIOD: u64 = 120;
 pub const FACTORY: &str = "83f7ziVs5VeQ8xiDka8zczbfJT4WcxsXQ18cqWwmV5ur";
@@ -29,7 +29,7 @@ pub const FEE_WALLET: &str = "3it64t7KXNip1C1BRYNh8ygeKyujWnaQrPSj3hV9TWbE";
 pub const DEADLINE_MARGIN: u64 = 259_200;
 
 /// Escrow account layout of the two-outcome shape (factory lib.rs):
-/// discriminator ‖ donor ‖ salt ‖ streamer ‖ resolver ‖ gross ‖ deadline ‖
+/// discriminator ‖ donor ‖ salt ‖ recipient ‖ resolver ‖ gross ‖ deadline ‖
 /// fee_bps ‖ fee_wallet ‖ bump ‖ settled.
 pub const ESCROW_DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
 
@@ -106,11 +106,11 @@ pub fn setup() -> Setup {
     }
 }
 
-pub fn seed_reputation(s: &Setup, voter: &[u8], km: &[u8], value: u128) {
+pub fn seed_reputation(s: &Setup, voter: &[u8], recipient: &[u8], value: u128) {
     let arg = Encode!(
         &CHAIN.to_string(),
         &ByteBuf::from(voter.to_vec()),
-        &ByteBuf::from(km.to_vec()),
+        &ByteBuf::from(recipient.to_vec()),
         &value
     )
     .unwrap();
@@ -169,27 +169,27 @@ pub fn sign(wallet: &Wallet, message: &[u8]) -> Vec<u8> {
 
 // ---- flows -------------------------------------------------------------------
 
-pub fn create_auction(s: &Setup, km: &Wallet, km_nonce: u64) -> Result<Vec<u8>, String> {
-    let auction_id = auth::derive_auction_id(s.game.as_slice(), &km.address, km_nonce).unwrap();
+pub fn create_auction(s: &Setup, recipient: &Wallet, recipient_nonce: u64) -> Result<Vec<u8>, String> {
+    let auction_id = auth::derive_auction_id(s.game.as_slice(), &recipient.address, recipient_nonce).unwrap();
     let message = auth::auction_message(
         CHAIN,
         &s.game.to_text(),
         &auction_id,
         &auth::Action::Create {
-            km_nonce,
+            recipient_nonce,
             duration: DURATION,
             perform_window: PERFORM_WINDOW,
-            min_bid: MIN_BID,
+            min_entry: MIN_ENTRY,
         },
     );
     let arg = CreateAuctionArg {
         chain: CHAIN.to_string(),
-        km: ByteBuf::from(km.address.clone()),
-        km_nonce,
+        recipient: ByteBuf::from(recipient.address.clone()),
+        recipient_nonce,
         duration: DURATION,
         perform_window: PERFORM_WINDOW,
-        min_bid: MIN_BID,
-        signature: ByteBuf::from(sign(km, message.as_bytes())),
+        min_entry: MIN_ENTRY,
+        signature: ByteBuf::from(sign(recipient, message.as_bytes())),
     };
     let (result,): (Result<ByteBuf, String>,) =
         update(&s.pic, s.game, "create_auction", Encode!(&arg).unwrap());
@@ -216,11 +216,11 @@ pub fn good_deadline(created_at: u64) -> u64 {
 }
 
 /// The salt of the two-outcome shape, re-implemented independently of
-/// crown-salt: sha256(donor ‖ streamer ‖ gross_le ‖ deadline_le ‖ resolver ‖
+/// crown-salt: sha256(donor ‖ recipient ‖ gross_le ‖ deadline_le ‖ resolver ‖
 /// fee_bps_le ‖ fee_wallet ‖ nonce_le).
 pub fn derive_salt(
     donor: &[u8],
-    km: &[u8],
+    recipient: &[u8],
     gross: u64,
     deadline: u64,
     resolver: &[u8],
@@ -228,7 +228,7 @@ pub fn derive_salt(
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(donor);
-    hasher.update(km);
+    hasher.update(recipient);
     hasher.update(gross.to_le_bytes());
     hasher.update((deadline as i64).to_le_bytes());
     hasher.update(resolver);
@@ -252,7 +252,7 @@ pub fn derive_escrow_address(salt: &[u8; 32]) -> Vec<u8> {
 pub fn escrow_account_data(
     donor: &[u8],
     salt: &[u8; 32],
-    km: &[u8],
+    recipient: &[u8],
     resolver: &[u8],
     gross: u64,
     deadline: u64,
@@ -262,7 +262,7 @@ pub fn escrow_account_data(
     data.extend_from_slice(&ESCROW_DISCRIMINATOR);
     data.extend_from_slice(donor);
     data.extend_from_slice(salt);
-    data.extend_from_slice(km);
+    data.extend_from_slice(recipient);
     data.extend_from_slice(resolver);
     data.extend_from_slice(&gross.to_le_bytes());
     data.extend_from_slice(&(deadline as i64).to_le_bytes());
@@ -301,9 +301,9 @@ pub fn set_broken(s: &Setup, broken: bool) {
     let (_,): ((),) = update(&s.pic, s.rpc, "set_broken", Encode!(&broken).unwrap());
 }
 
-/// One prepared bid: an escrow account planted in the mock, ready to be
+/// One prepared entry: an escrow account planted in the mock, ready to be
 /// registered.
-pub struct Bid {
+pub struct Entry {
     pub donor: Wallet,
     pub text_hash: [u8; 32],
     pub gross: u64,
@@ -315,25 +315,25 @@ pub struct Bid {
     pub escrow: Vec<u8>,
 }
 
-/// Derives the bid's addresses, plants an honest escrow account into the
+/// Derives the entry's addresses, plants an honest escrow account into the
 /// mock and returns everything registration needs.
 #[allow(clippy::too_many_arguments)] // a birth is a birth: seven fields plus the harness
-pub fn plant_bid(
+pub fn plant_entry(
     s: &Setup,
     auction_id: &[u8],
-    km: &Wallet,
+    recipient: &Wallet,
     donor_seed: u8,
     text_hash: [u8; 32],
     gross: u64,
     deadline: u64,
     nonce: u64,
-) -> Bid {
+) -> Entry {
     let donor = wallet(donor_seed);
     let resolver = get_resolver(s, auction_id, &text_hash).expect("resolver");
     let lot_id = auth::derive_lot_id(auction_id, &text_hash).unwrap();
     let salt = derive_salt(
         &donor.address,
-        &km.address,
+        &recipient.address,
         gross,
         deadline,
         &resolver,
@@ -343,14 +343,14 @@ pub fn plant_bid(
     let data = escrow_account_data(
         &donor.address,
         &salt,
-        &km.address,
+        &recipient.address,
         &resolver,
         gross,
         deadline,
         false,
     );
     plant_account(s, &escrow, FACTORY, &data);
-    Bid {
+    Entry {
         donor,
         text_hash,
         gross,
@@ -386,15 +386,15 @@ pub fn register(
     result.map(|escrow| escrow.to_vec())
 }
 
-pub fn register_bid(s: &Setup, auction_id: &[u8], bid: &Bid) -> Result<Vec<u8>, String> {
+pub fn register_entry(s: &Setup, auction_id: &[u8], entry: &Entry) -> Result<Vec<u8>, String> {
     register(
         s,
         auction_id,
-        &bid.text_hash,
-        &bid.donor.address,
-        bid.gross,
-        bid.deadline,
-        bid.nonce,
+        &entry.text_hash,
+        &entry.donor.address,
+        entry.gross,
+        entry.deadline,
+        entry.nonce,
     )
 }
 
@@ -609,16 +609,16 @@ pub fn operator_cancel_auction(
 pub fn request_signature(
     s: &Setup,
     auction_id: &[u8],
-    bid: &Bid,
+    entry: &Entry,
 ) -> Result<auction::api::SignedVerdict, String> {
     request_signature_raw(
         s,
         auction_id,
-        &bid.text_hash,
-        &bid.donor.address,
-        bid.gross,
-        bid.deadline,
-        bid.nonce,
+        &entry.text_hash,
+        &entry.donor.address,
+        entry.gross,
+        entry.deadline,
+        entry.nonce,
     )
 }
 

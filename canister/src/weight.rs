@@ -5,15 +5,15 @@
 use candid::{Nat, Principal};
 use serde_bytes::ByteBuf;
 
-/// book[(chain, wallet, km)] at this moment, straight from the pinned
+/// book[(chain, wallet, recipient)] at this moment, straight from the pinned
 /// crown-index canister.
-pub async fn book_value(chain: &str, wallet: &[u8], km: &[u8]) -> Result<u128, String> {
+pub async fn reputation(chain: &str, wallet: &[u8], recipient: &[u8]) -> Result<u128, String> {
     let index = crate::crown_index().ok_or("crown-index principal is not configured")?;
     let response = ic_cdk::call::Call::unbounded_wait(index, "get_reputation")
         .with_args(&(
             chain.to_string(),
             ByteBuf::from(wallet.to_vec()),
-            ByteBuf::from(km.to_vec()),
+            ByteBuf::from(recipient.to_vec()),
         ))
         .await
         .map_err(|error| format!("crown-index call failed: {error}"))?;

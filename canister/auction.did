@@ -16,19 +16,19 @@ type State = variant {
 };
 type Choice = variant { done; not_done };
 type Vote = record { voter : blob; choice : Choice; weight : nat };
-type Actor = variant { km; operator };
+type Actor = variant { recipient; operator };
 // Attribution of a return: who and when, certified forever.
 type ReturnStamp = record { at : nat64; by : Actor };
 type Auction = record {
   chain : text;
   auction_id : blob;
-  km : blob;
-  km_nonce : nat64;
+  recipient : blob;
+  recipient_nonce : nat64;
   created_at : nat64;
   duration : nat64;
   perform_window : nat64;
   voting_period : nat64;
-  min_bid : nat64;
+  min_entry : nat64;
   state : State;
   votes : vec Vote;
   winner_lot : opt blob;
@@ -60,11 +60,11 @@ type CertifiedRecord = record {
 };
 type CreateAuctionArg = record {
   chain : text;
-  km : blob;
-  km_nonce : nat64;
+  recipient : blob;
+  recipient_nonce : nat64;
   duration : nat64;
   perform_window : nat64;
-  min_bid : nat64;
+  min_entry : nat64;
   signature : blob;
 };
 type GetResolverArg = record {

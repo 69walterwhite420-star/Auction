@@ -3,7 +3,7 @@
 //! NNS, `commitment = finalized`, provider consensus per config. The client
 //! pattern mirrors the core's `index/src/source/solana.rs`.
 //!
-//! The read gates only the leaderboard: a declared entry becomes a bid when
+//! The read gates only the leaderboard: a declared entry becomes a entry when
 //! the finalized chain confirms the account exists, is owned by the pinned
 //! factory and carries exactly the declared birth (donor and salt at the
 //! header convention offsets, factory-spec §2.1). A transport error is a
@@ -24,7 +24,7 @@ use crate::ChainSpec;
 const ESCROW_ACCOUNT_DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
 
 /// Byte offset of `settled` in the two-outcome Escrow account: discriminator
-/// 8 ‖ donor 32 ‖ salt 32 ‖ streamer 32 ‖ resolver 32 ‖ gross 8 ‖ deadline 8
+/// 8 ‖ donor 32 ‖ salt 32 ‖ recipient 32 ‖ resolver 32 ‖ gross 8 ‖ deadline 8
 /// ‖ fee_bps 2 ‖ fee_wallet 32 ‖ bump 1 — then settled. Shape-specific: this
 /// is a two-outcome game (game-spec §12); the layout is pinned by the g2
 /// registration fixture.
