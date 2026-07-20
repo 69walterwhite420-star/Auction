@@ -10,6 +10,15 @@ cd "$(dirname "$0")/.."
 export CC_wasm32_unknown_unknown="$PWD/scripts/wasm-cc.sh"
 export AR_wasm32_unknown_unknown="${AR_WASM32:-$HOME/.cache/solana/v1.53/platform-tools/llvm/bin/llvm-ar}"
 
+# A second wasm baked with the fixture profile that leaves operator_wallet
+# unset: the init override can pin an operator wallet but never unpin one,
+# so the "operator methods are disabled" law needs its own build. Built
+# first and copied aside, then the real wasm overwrites the shared path.
+CROWN_PROFILE=../canister/tests/fixtures/no-operator \
+    cargo build --target wasm32-unknown-unknown --release -p auction
+cp target/wasm32-unknown-unknown/release/auction.wasm \
+   target/wasm32-unknown-unknown/release/auction-no-operator.wasm
+
 cargo build --target wasm32-unknown-unknown --release -p auction
 cargo build --target wasm32-unknown-unknown --release \
     --manifest-path canister/tests/mock-sol-rpc/Cargo.toml

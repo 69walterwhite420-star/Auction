@@ -243,6 +243,80 @@ fn finale_survives_a_burst_of_lots() {
     assert_eq!(winner_lot(&s, &auction_id), best_lot);
 }
 
+/// A lot keeps taking money after it is accepted, and the finale measures
+/// what stands when bidding closes — not what stood when the recipient
+/// accepted. If the registry closed a lot at its accept, or if the winner
+/// were fixed at that moment, the late top-up would lose an auction its
+/// money won.
+#[test]
+#[ignore]
+fn a_top_up_after_the_accept_moves_the_win() {
+    let s = setup();
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
+    let deadline = good_deadline(created_at(&s, &auction_id));
+
+    let a = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
+    register_entry(&s, &auction_id, &a).expect("register");
+    let b = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_B,
+        2_000_000,
+        deadline,
+        2,
+    );
+    register_entry(&s, &auction_id, &b).expect("register");
+    accept_lot(&s, &auction_id, a.lot_id, &recipient).expect("accept A");
+    accept_lot(&s, &auction_id, b.lot_id, &recipient).expect("accept B");
+    // B leads at the moment both lots are accepted.
+    assert!(lot_state(&fetch_lot(&s, &auction_id, &a.lot_id)).sum < 2_000_000);
+
+    // A third donor tops A up after the accept — the lot is in the race and
+    // still open for money.
+    let topup = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x23,
+        TEXT_A,
+        1_500_000,
+        deadline,
+        3,
+    );
+    register_entry(&s, &auction_id, &topup).expect("an accepted lot still takes money");
+    let lot = lot_state(&fetch_lot(&s, &auction_id, &a.lot_id));
+    assert_eq!(lot.sum, 2_500_000);
+    assert!(lot.accepted_at.is_some(), "the accept stands");
+
+    advance(&s, DURATION);
+    assert_eq!(
+        winner_lot(&s, &auction_id),
+        Some(a.lot_id.to_vec()),
+        "the topped-up lot won"
+    );
+    // And the verdicts follow the new order: yesterday's leader is freed.
+    let verdict = request_signature(&s, &auction_id, &b).expect("the former leader signs");
+    assert_eq!(verdict.outcome, OutcomeView::Cancel);
+    verify_verdict(&b.resolver, &b.escrow, 1, &verdict.signature);
+    assert_eq!(
+        request_signature(&s, &auction_id, &topup).unwrap_err(),
+        "no verdict yet",
+        "the winner waits for its own verdict"
+    );
+}
+
 // ---- ready and voting ----------------------------------------------------------
 
 /// A winner-in-performing auction: two lots, B the richer, both accepted.
@@ -449,7 +523,102 @@ fn recipient_returns_the_winner_before_ready_only() {
     );
 }
 
+/// The book going down must not cost a vote (docs/standards.md §8): the
+/// weight call fails, nothing is written, and the same wallet casts the same
+/// vote once the book is back. A canister that swallowed the failure would
+/// weigh the voter at zero; one that recorded the attempt would meet its own
+/// retry as a duplicate — either way the vote is lost for good.
+#[test]
+#[ignore]
+fn a_broken_book_costs_no_vote() {
+    let s = setup();
+    let recipient = wallet(0x10);
+    let (auction_id, winner, _) = performing(&s, &recipient, 1);
+    ready(&s, &auction_id, &recipient).expect("ready");
+
+    let voter = wallet(0x41);
+    seed_reputation(&s, &voter.address, &recipient.address, 500_000);
+    set_index_broken(&s, true);
+    let error = vote(&s, &auction_id, &voter, ChoiceView::Done).unwrap_err();
+    assert!(error.contains("crown-index call failed"), "got: {error}");
+    assert!(
+        auction_state(&fetch_auction(&s, &auction_id))
+            .votes
+            .is_empty(),
+        "a failed weight call writes nothing"
+    );
+
+    set_index_broken(&s, false);
+    vote(&s, &auction_id, &voter, ChoiceView::Done).expect("the same wallet votes again");
+    let record = auction_state(&fetch_auction(&s, &auction_id));
+    assert_eq!(record.votes.len(), 1);
+    assert_eq!(
+        record.votes[0].weight, 500_000,
+        "weighed by the healed book"
+    );
+
+    advance(&s, VOTING_PERIOD);
+    assert_eq!(
+        state_of(&s, &auction_id),
+        StateView::Done {
+            winner: Some(OutcomeView::Settle)
+        },
+        "the recovered vote decided the auction"
+    );
+    let verdict = request_signature(&s, &auction_id, &winner).expect("settle signs");
+    assert_eq!(verdict.outcome, OutcomeView::Settle);
+}
+
 // ---- the operator ---------------------------------------------------------------
+
+/// With no operator wallet baked and none pinned by an override, the three
+/// operator methods are off (docs/standards.md §9). If any of them fell
+/// through to a default signer, the censorship move would belong to whoever
+/// controls that key — on a canister whose operator was never appointed.
+#[test]
+#[ignore]
+fn without_an_operator_wallet_the_operator_methods_are_off() {
+    let s = setup_without_operator();
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
+    let deadline = good_deadline(created_at(&s, &auction_id));
+    let entry = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
+    register_entry(&s, &auction_id, &entry).expect("register");
+
+    // The wallet the other tests appoint has no standing here, and neither
+    // has the recipient: without a configured operator there is no signer
+    // whose paper opens these doors.
+    for signer in [&operator(), &recipient] {
+        assert_eq!(
+            operator_refund_lot(&s, &auction_id, entry.lot_id, signer).unwrap_err(),
+            "no operator wallet configured"
+        );
+        assert_eq!(
+            operator_refund_entry(&s, &auction_id, &entry.escrow, signer).unwrap_err(),
+            "no operator wallet configured"
+        );
+        assert_eq!(
+            operator_cancel_auction(&s, &auction_id, signer).unwrap_err(),
+            "no operator wallet configured"
+        );
+    }
+
+    // Nothing was touched, and the recipient's own doors still work: the
+    // instance is a live game, not a broken build.
+    let lot = lot_state(&fetch_lot(&s, &auction_id, &entry.lot_id));
+    assert!(lot.returned.is_none());
+    assert_eq!(state_of(&s, &auction_id), StateView::Bidding);
+    return_lot(&s, &auction_id, entry.lot_id, &recipient).expect("the recipient still returns");
+}
 
 #[test]
 #[ignore]

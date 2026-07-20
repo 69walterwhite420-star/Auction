@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 candid = "0.10"
 ic-cdk = "0.20"
+serde = { version = "1", features = ["derive"] }
 sol_rpc_types = "3"
 
 [workspace]

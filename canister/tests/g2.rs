@@ -213,14 +213,50 @@ fn registration_rejects_fakes() {
     // (a) A phantom: valid declaration, no account on chain.
     assert_eq!(try_register().unwrap_err(), "escrow account does not exist");
 
-    // (b) The account exists but a foreign program owns it.
+    // (b) A real escrow born with a price other than this game's: it exists
+    // on chain, is owned by the factory, carries an honest header — and
+    // lives at another address, because the fee is part of the salt. The
+    // game must look only where its own price puts the escrow; a canister
+    // that trusted the numbers in the account instead of its own config
+    // would admit an escrow that pays a foreign fee wallet.
+    let mut foreign_birth = Vec::new();
+    foreign_birth.extend_from_slice(&donor.address);
+    foreign_birth.extend_from_slice(&recipient.address);
+    foreign_birth.extend_from_slice(&1_000_000u64.to_le_bytes());
+    foreign_birth.extend_from_slice(&(deadline as i64).to_le_bytes());
+    foreign_birth.extend_from_slice(&resolver);
+    foreign_birth.extend_from_slice(&9_999u16.to_le_bytes());
+    foreign_birth.extend_from_slice(&bs58::decode(FEE_WALLET).into_vec().unwrap());
+    foreign_birth.extend_from_slice(&7u64.to_le_bytes());
+    use sha2::Digest;
+    let foreign_salt: [u8; 32] = sha2::Sha256::digest(&foreign_birth).into();
+    assert_ne!(foreign_salt, salt, "a foreign fee shifts the salt");
+    let foreign_escrow = derive_escrow_address(&foreign_salt);
+    assert_ne!(foreign_escrow, escrow, "and with it the address");
+    plant_account(
+        &s,
+        &foreign_escrow,
+        FACTORY,
+        &escrow_account_data(
+            &donor.address,
+            &foreign_salt,
+            &recipient.address,
+            &resolver,
+            1_000_000,
+            deadline,
+            false,
+        ),
+    );
+    assert_eq!(try_register().unwrap_err(), "escrow account does not exist");
+
+    // (c) The account exists but a foreign program owns it.
     plant_account(&s, &escrow, "11111111111111111111111111111111", &honest());
     assert_eq!(
         try_register().unwrap_err(),
         "escrow account is not owned by the factory"
     );
 
-    // (c) The declared donor does not match the account.
+    // (d) The declared donor does not match the account.
     let mut data = honest();
     data[8..40].copy_from_slice(&[0x77; 32]);
     plant_account(&s, &escrow, FACTORY, &data);
@@ -229,7 +265,7 @@ fn registration_rejects_fakes() {
         "escrow donor does not match the declared birth"
     );
 
-    // (d) The salt does not match: some other birth lives at this address.
+    // (e) The salt does not match: some other birth lives at this address.
     let mut data = honest();
     data[40..72].copy_from_slice(&[0x78; 32]);
     plant_account(&s, &escrow, FACTORY, &data);
@@ -238,26 +274,11 @@ fn registration_rejects_fakes() {
         "escrow salt does not match the declared birth"
     );
 
-    // (e) A settled escrow is spent money, not a entry.
+    // (f) A settled escrow is spent money, not a entry.
     let mut data = honest();
     data[187] = 1;
     plant_account(&s, &escrow, FACTORY, &data);
     assert_eq!(try_register().unwrap_err(), "escrow already settled");
-
-    // (f) A price other than the game's derives another address, where no
-    // account exists — the wrong-fee escrow simply is not found.
-    let mut wrong_fee = Vec::new();
-    wrong_fee.extend_from_slice(&donor.address);
-    wrong_fee.extend_from_slice(&recipient.address);
-    wrong_fee.extend_from_slice(&1_000_000u64.to_le_bytes());
-    wrong_fee.extend_from_slice(&(deadline as i64).to_le_bytes());
-    wrong_fee.extend_from_slice(&resolver);
-    wrong_fee.extend_from_slice(&9_999u16.to_le_bytes());
-    wrong_fee.extend_from_slice(&bs58::decode(FEE_WALLET).into_vec().unwrap());
-    wrong_fee.extend_from_slice(&7u64.to_le_bytes());
-    use sha2::Digest;
-    let foreign_salt: [u8; 32] = sha2::Sha256::digest(&wrong_fee).into();
-    assert_ne!(foreign_salt, salt, "a foreign fee shifts the salt");
 
     // After all fakes, the honest account registers.
     plant_account(&s, &escrow, FACTORY, &honest());
@@ -380,17 +401,127 @@ fn transport_failure_is_an_error_not_a_write() {
         7,
     );
 
-    set_broken(&s, true);
-    let error = register_entry(&s, &auction_id, &entry).unwrap_err();
-    assert!(error.contains("no consensus"), "got: {error}");
-    assert!(
-        list_entries(&s, &auction_id, &entry.lot_id).is_empty(),
-        "no write on transport failure"
-    );
+    // Providers that disagree, and providers that agree the call failed:
+    // both shapes are call errors, neither is a write and neither is a
+    // guess. A canister that treated either as "no such account" — or worse,
+    // as a pass — would write a leaderboard entry the chain never confirmed.
+    for (failure, expected) in [
+        (Failure::NoConsensus, "no consensus"),
+        (Failure::RpcError, "the providers agree this read failed"),
+    ] {
+        set_failure(&s, failure);
+        let error = register_entry(&s, &auction_id, &entry).unwrap_err();
+        assert!(error.contains(expected), "got: {error}");
+        assert!(
+            list_entries(&s, &auction_id, &entry.lot_id).is_empty(),
+            "no write on transport failure"
+        );
+    }
 
     // The same declaration registers once the transport heals.
-    set_broken(&s, false);
+    set_failure(&s, Failure::None);
     register_entry(&s, &auction_id, &entry).expect("retry succeeds");
+}
+
+// ---- the board -----------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn the_board_lists_every_lot_of_one_auction_only() {
+    let s = setup();
+    let recipient = wallet(0x10);
+    let auction_id = create_auction(&s, &recipient, 1).expect("create");
+    let deadline = good_deadline(created_at(&s, &auction_id));
+
+    // Lot A: two entries. Lot B: one, accepted. A second auction of the same
+    // recipient holds a lot of its own.
+    let a1 = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x21,
+        TEXT_A,
+        1_000_000,
+        deadline,
+        1,
+    );
+    register_entry(&s, &auction_id, &a1).expect("register");
+    let a2 = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x22,
+        TEXT_A,
+        500_000,
+        deadline,
+        2,
+    );
+    register_entry(&s, &auction_id, &a2).expect("register");
+    let b = plant_entry(
+        &s,
+        &auction_id,
+        &recipient,
+        0x23,
+        TEXT_B,
+        2_000_000,
+        deadline,
+        3,
+    );
+    register_entry(&s, &auction_id, &b).expect("register");
+    accept_lot(&s, &auction_id, b.lot_id, &recipient).expect("accept");
+
+    let other = create_auction(&s, &recipient, 2).expect("create");
+    let other_deadline = good_deadline(created_at(&s, &other));
+    let c = plant_entry(
+        &s,
+        &other,
+        &recipient,
+        0x24,
+        TEXT_A,
+        7_000_000,
+        other_deadline,
+        4,
+    );
+    register_entry(&s, &other, &c).expect("register");
+
+    // The board carries the whole state of every lot — and nothing from the
+    // neighbouring auction: a slipped prefix scan would leak another
+    // auction's lots onto this board, or hide this one's.
+    let board = list_lots(&s, &auction_id);
+    assert_eq!(board.len(), 2, "both lots, no more");
+    let listed_a = board
+        .iter()
+        .find(|lot| lot.lot_id.as_slice() == a1.lot_id.as_slice())
+        .expect("lot A listed");
+    assert_eq!(listed_a.sum, 1_500_000);
+    assert_eq!(listed_a.entries, 2);
+    assert!(listed_a.accepted_at.is_none());
+    assert_eq!(listed_a.resolver.to_vec(), a1.resolver);
+    let listed_b = board
+        .iter()
+        .find(|lot| lot.lot_id.as_slice() == b.lot_id.as_slice())
+        .expect("lot B listed");
+    assert_eq!(listed_b.sum, 2_000_000);
+    assert!(listed_b.accepted_at.is_some());
+
+    let other_board = list_lots(&s, &other);
+    assert_eq!(other_board.len(), 1, "the neighbour keeps its own board");
+    assert_eq!(other_board[0].lot_id.as_slice(), c.lot_id.as_slice());
+    assert!(
+        list_lots(&s, &[0x0E; 32]).is_empty(),
+        "no auction, no board"
+    );
+}
+
+/// The version the canister reports is the one it was built from. A client
+/// that gates on the machine's rules reads this number; a hardcoded one
+/// would keep claiming the old rules after an upgrade changed them.
+#[test]
+#[ignore]
+fn logic_version_is_the_one_built_in() {
+    let s = setup();
+    let (version,): (u32,) = query(&s.pic, s.game, "get_logic_version", Encode!().unwrap());
+    assert_eq!(version, auction_logic::LOGIC_VERSION);
 }
 
 // ---- accept and returns --------------------------------------------------------

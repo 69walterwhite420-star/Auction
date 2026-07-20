@@ -43,6 +43,18 @@ pub fn game_wasm() -> Vec<u8> {
     std::fs::read(path).expect("wasm missing: run scripts/test-canister.sh")
 }
 
+/// The same canister baked from the fixture profile that leaves
+/// operator_wallet unset (scripts/test-canister.sh): the only way to observe
+/// the disabled operator methods, since the init override can pin a wallet
+/// but never unpin one.
+pub fn game_wasm_without_operator() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../target/wasm32-unknown-unknown/release/auction-no-operator.wasm"
+    );
+    std::fs::read(path).expect("wasm missing: run scripts/test-canister.sh")
+}
+
 pub fn mock_wasm() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -76,6 +88,16 @@ pub struct Setup {
 /// overrides. Everything sits on the NNS subnet so certificates carry no
 /// delegation; the II subnet provides the threshold keys.
 pub fn setup() -> Setup {
+    setup_with(game_wasm(), Some(operator().address))
+}
+
+/// The same instance with no operator wallet anywhere: the fixture-profile
+/// wasm bakes none and no override pins one.
+pub fn setup_without_operator() -> Setup {
+    setup_with(game_wasm_without_operator(), None)
+}
+
+fn setup_with(wasm: Vec<u8>, operator_wallet: Option<Vec<u8>>) -> Setup {
     let pic = PocketIcBuilder::new()
         .with_nns_subnet()
         .with_ii_subnet()
@@ -95,9 +117,9 @@ pub fn setup() -> Setup {
     let overrides = auction::Overrides {
         sol_rpc: Some(rpc),
         crown_index: Some(index),
-        operator_wallet: Some(ByteBuf::from(operator().address)),
+        operator_wallet: operator_wallet.map(ByteBuf::from),
     };
-    pic.install_canister(game, game_wasm(), Encode!(&Some(overrides)).unwrap(), None);
+    pic.install_canister(game, wasm, Encode!(&Some(overrides)).unwrap(), None);
     Setup {
         pic,
         game,
@@ -302,8 +324,22 @@ pub fn plant_account(s: &Setup, address: &[u8], owner: &str, data: &[u8]) {
     );
 }
 
-pub fn set_broken(s: &Setup, broken: bool) {
-    let (_,): ((),) = update(&s.pic, s.rpc, "set_broken", Encode!(&broken).unwrap());
+/// Mirrors `Failure` in the SOL RPC mock: the two shapes a failing chain
+/// read takes, plus the honest one.
+#[derive(candid::CandidType)]
+pub enum Failure {
+    None,
+    NoConsensus,
+    RpcError,
+}
+
+pub fn set_failure(s: &Setup, failure: Failure) {
+    let (_,): ((),) = update(&s.pic, s.rpc, "set_failure", Encode!(&failure).unwrap());
+}
+
+/// Takes the book offline: `get_reputation` traps until it is healed.
+pub fn set_index_broken(s: &Setup, broken: bool) {
+    let (_,): ((),) = update(&s.pic, s.index, "set_broken", Encode!(&broken).unwrap());
 }
 
 /// One prepared entry: an escrow account planted in the mock, ready to be

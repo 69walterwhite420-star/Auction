@@ -1,0 +1,20 @@
+# Test fixture profile, not an environment: config/testnet.toml with the
+# operator wallet left unset. It exists so the PocketIC tests can install a
+# canister where `operator_wallet` is genuinely empty and prove the three
+# operator methods are disabled (docs/standards.md §9) — the init override
+# can only pin a wallet, never unpin one.
+#
+# Baked by scripts/test-canister.sh via CROWN_PROFILE, whose value build.rs
+# resolves relative to config/.
+
+threshold_key = "key_1"
+voting_period = 120
+
+[[chain]]
+id      = "solana-devnet"
+factory = "83f7ziVs5VeQ8xiDka8zczbfJT4WcxsXQ18cqWwmV5ur"
+domain  = "crown:two-outcome:solana-devnet"
+source    = "Default:Devnet"
+consensus = "3-of-5"
+fee_bps    = 300
+fee_wallet = "3it64t7KXNip1C1BRYNh8ygeKyujWnaQrPSj3hV9TWbE"

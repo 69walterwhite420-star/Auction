@@ -319,7 +319,20 @@ pub fn validate_config() -> Result<(), AuthError> {
             .filter(|b| b.len() == 32)
             .ok_or(AuthError::MalformedConfig)?;
     }
-    for (i, spec) in crate::CHAINS.iter().enumerate() {
+    validate_chains(crate::CHAINS, crate::PROFILE)?;
+    // The baked book principal, when present, must parse. An empty value is
+    // legal: the init override supplies it on local replicas (G3).
+    if !crate::CROWN_INDEX.is_empty() && candid::Principal::from_text(crate::CROWN_INDEX).is_err() {
+        return Err(AuthError::MalformedConfig);
+    }
+    Ok(())
+}
+
+/// The per-chain half of `validate_config`, over an explicit table: the
+/// baked one in production, hand-built ones in the tests that prove a
+/// malformed chain entry cannot pass.
+fn validate_chains(chains: &[ChainSpec], profile: &str) -> Result<(), AuthError> {
+    for (i, spec) in chains.iter().enumerate() {
         bs58::decode(spec.factory)
             .into_vec()
             .ok()
@@ -341,7 +354,7 @@ pub fn validate_config() -> Result<(), AuthError> {
         // same rule at build time, this refuses a bypassed build to run.
         crate::solana::parse_sources(spec.source).ok_or(AuthError::MalformedConfig)?;
         crate::solana::parse_consensus(spec.consensus).ok_or(AuthError::MalformedConfig)?;
-        if crate::PROFILE == "mainnet" && spec.source.starts_with("Custom") {
+        if profile == "mainnet" && spec.source.starts_with("Custom") {
             return Err(AuthError::MalformedConfig);
         }
         // The chain id goes into the signed text as a value. A newline (or a
@@ -364,16 +377,11 @@ pub fn validate_config() -> Result<(), AuthError> {
         // one escrow address for the same birth fields under two chain keys,
         // and the registry could then hold two verdicts for one escrow.
         // Refuse such a config to exist.
-        for other in crate::CHAINS.iter().skip(i + 1) {
+        for other in chains.iter().skip(i + 1) {
             if spec.id == other.id || spec.domain == other.domain || spec.factory == other.factory {
                 return Err(AuthError::MalformedConfig);
             }
         }
-    }
-    // The baked book principal, when present, must parse. An empty value is
-    // legal: the init override supplies it on local replicas (G3).
-    if !crate::CROWN_INDEX.is_empty() && candid::Principal::from_text(crate::CROWN_INDEX).is_err() {
-        return Err(AuthError::MalformedConfig);
     }
     Ok(())
 }
@@ -803,6 +811,14 @@ mod tests {
             verify_wallet_signature(foreign.as_bytes(), &sig, &address),
             Err(AuthError::BadSignature)
         );
+        // Foreign cluster: the same signer, auction and action on another
+        // chain. A signature must never cross clusters — the escrows of one
+        // chain would otherwise be resolvable with the other chain's paper.
+        let foreign = auction_message("solana-mainnet", CANISTER, &AUCTION, &Action::Cancel);
+        assert_eq!(
+            verify_wallet_signature(foreign.as_bytes(), &sig, &address),
+            Err(AuthError::BadSignature)
+        );
         // Foreign canister.
         let foreign = auction_message("solana-devnet", "aaaaa-aa", &AUCTION, &Action::Cancel);
         assert_eq!(
@@ -825,6 +841,168 @@ mod tests {
     #[test]
     fn baked_config_is_valid() {
         validate_config().unwrap();
+    }
+
+    /// A second valid 32-byte base58 address, for the pairwise-distinctness
+    /// cases: [0x44; 32], the crown-salt reference fee wallet.
+    const OTHER_ADDRESS: &str = "5bV6jUfhDHCQVA1WfKBUnXUsboJgoKgkzkKcxr3joew5";
+
+    /// The single legal shape: `spec()` alone, on the profile it names.
+    #[test]
+    fn validate_chains_accepts_a_well_formed_table() {
+        validate_chains(&[spec()], "testnet").unwrap();
+        validate_chains(&[], "mainnet").unwrap();
+    }
+
+    /// Every field a malformed chain entry can be malformed in. If any of
+    /// these stops being refused, `init` installs a canister with that
+    /// config: unparsable factory or fee_wallet means every escrow address
+    /// it derives is garbage, `fee_bps >= 10_000` prices an entry at more
+    /// than it holds, an empty domain drops the cluster separator out of
+    /// the verdict message, and an unparsable source or consensus means the
+    /// chain read cannot even be built.
+    #[test]
+    fn validate_chains_refuses_malformed_fields() {
+        let cases = [
+            ChainSpec {
+                factory: "not base58 at all!",
+                ..spec()
+            },
+            // Valid base58, wrong length.
+            ChainSpec {
+                factory: "11111111",
+                ..spec()
+            },
+            ChainSpec {
+                fee_wallet: "not base58 at all!",
+                ..spec()
+            },
+            ChainSpec {
+                fee_bps: 10_000,
+                ..spec()
+            },
+            ChainSpec {
+                fee_bps: u16::MAX,
+                ..spec()
+            },
+            ChainSpec {
+                domain: "",
+                ..spec()
+            },
+            ChainSpec {
+                source: "Default:Testnet",
+                ..spec()
+            },
+            ChainSpec {
+                consensus: "3of5",
+                ..spec()
+            },
+        ];
+        for case in cases {
+            let id = case.id;
+            assert_eq!(
+                validate_chains(&[case], "testnet"),
+                Err(AuthError::MalformedConfig),
+                "malformed entry accepted: {id}"
+            );
+        }
+        // The boundary itself is legal: the fee is a fraction, 99.99% and no
+        // more.
+        validate_chains(
+            &[ChainSpec {
+                fee_bps: 9_999,
+                ..spec()
+            }],
+            "testnet",
+        )
+        .unwrap();
+    }
+
+    /// The chain id is a value in the signed text. Anything but graphic
+    /// ASCII without ':' would let two different declarations render one
+    /// message — a signature for one chain would then authorize the other.
+    #[test]
+    fn validate_chains_refuses_unprintable_chain_ids() {
+        for id in [
+            "",
+            "solana:devnet",
+            "solana\ndevnet",
+            "solana devnet",
+            "solana-devnét",
+            "solana-devnet\u{7f}",
+        ] {
+            assert_eq!(
+                validate_chains(&[ChainSpec { id, ..spec() }], "testnet"),
+                Err(AuthError::MalformedConfig),
+                "chain id accepted: {id:?}"
+            );
+        }
+    }
+
+    /// Chains must be pairwise distinct in id, domain and factory. Two
+    /// entries sharing any of the three derive one escrow address (or one
+    /// verdict domain) under two chain keys, and the registry would then
+    /// hold two verdicts for one escrow.
+    #[test]
+    fn validate_chains_refuses_colliding_pairs() {
+        let distinct = || ChainSpec {
+            id: "solana-mainnet",
+            domain: "crown:two-outcome:solana-mainnet",
+            factory: OTHER_ADDRESS,
+            ..spec()
+        };
+        validate_chains(&[spec(), distinct()], "testnet").unwrap();
+
+        let collisions = [
+            ChainSpec {
+                id: spec().id,
+                ..distinct()
+            },
+            ChainSpec {
+                domain: spec().domain,
+                ..distinct()
+            },
+            ChainSpec {
+                factory: spec().factory,
+                ..distinct()
+            },
+        ];
+        for other in collisions {
+            let (id, domain, factory) = (other.id, other.domain, other.factory);
+            assert_eq!(
+                validate_chains(&[spec(), other], "testnet"),
+                Err(AuthError::MalformedConfig),
+                "colliding pair accepted: {id} {domain} {factory}"
+            );
+        }
+        // The check is pairwise, not neighbour-wise: a collision between the
+        // first and the last entry of a longer table counts too.
+        let far = ChainSpec {
+            id: "solana-testnet",
+            domain: "crown:two-outcome:solana-testnet",
+            factory: spec().factory,
+            ..spec()
+        };
+        assert_eq!(
+            validate_chains(&[spec(), distinct(), far], "testnet"),
+            Err(AuthError::MalformedConfig)
+        );
+    }
+
+    /// Mainnet reads the chain only through the NNS-owned default providers
+    /// (core-spec §8). A Custom source baked into a mainnet build must
+    /// refuse to run even if the build-time lint was bypassed.
+    #[test]
+    fn validate_chains_refuses_custom_sources_on_mainnet() {
+        let custom = || ChainSpec {
+            source: "Custom:http://localhost:8899",
+            ..spec()
+        };
+        validate_chains(&[custom()], "testnet").unwrap();
+        assert_eq!(
+            validate_chains(&[custom()], "mainnet"),
+            Err(AuthError::MalformedConfig)
+        );
     }
 
     // ---- escrow derivation ------------------------------------------------
