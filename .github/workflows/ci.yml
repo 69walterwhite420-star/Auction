@@ -26,6 +26,13 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The sighted game pulls the SOL RPC client, whose tree compiles C for
+      # wasm32. scripts/wasm-cc.sh finds clang itself; only the archiver has
+      # to be pointed at something that understands wasm objects.
+      - name: llvm-ar for the wasm32 C bits
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm
+          echo "AR_WASM32=$(command -v llvm-ar)" >> "$GITHUB_ENV"
       # The server the PocketIC client talks to, pinned to the version the
       # tests are verified against. scripts/test-canister.sh honours this.
       - name: pocket-ic server
