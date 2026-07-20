@@ -268,7 +268,7 @@ EOF
 # to them alone — the chain driver builds the factory crate, whose own
 # profile must stay the default.
 export CC_wasm32_unknown_unknown="$PWD/scripts/wasm-cc.sh"
-export AR_wasm32_unknown_unknown="${AR_WASM32:-$HOME/.cache/solana/v1.53/platform-tools/llvm/bin/llvm-ar}"
+export AR_wasm32_unknown_unknown="${AR_WASM32:-$(command -v llvm-ar || ls -d "$HOME"/.cache/solana/*/platform-tools/llvm/bin/llvm-ar 2>/dev/null | sort -V | tail -1 | grep . || echo "$HOME/.cache/zig/zig-ar")}"
 echo "== build crown-index and the game (local profiles)"
 (cd "$CORE" && CROWN_PROFILE=local \
     CC_wasm32_unknown_unknown="$CORE/scripts/wasm-cc.sh" \

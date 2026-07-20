@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 # zstd-sys inside the SOL RPC client tree compiles C for wasm32; the shim
 # picks system clang with a wasm backend or falls back to zig cc.
 export CC_wasm32_unknown_unknown="$PWD/scripts/wasm-cc.sh"
-export AR_wasm32_unknown_unknown="${AR_WASM32:-$HOME/.cache/solana/v1.53/platform-tools/llvm/bin/llvm-ar}"
+export AR_wasm32_unknown_unknown="${AR_WASM32:-$(command -v llvm-ar || ls -d "$HOME"/.cache/solana/*/platform-tools/llvm/bin/llvm-ar 2>/dev/null | sort -V | tail -1 | grep . || echo "$HOME/.cache/zig/zig-ar")}"
 
 # A second wasm baked with the fixture profile that leaves operator_wallet
 # unset: the init override can pin an operator wallet but never unpin one,
