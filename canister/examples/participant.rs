@@ -8,6 +8,7 @@
 //!       action: create <recipient_nonce> <duration> <perform_window> <min_entry>
 //!             | accept <lot_hex> | return-lot <lot_hex> | return-entry <escrow_hex>
 //!             | cancel | ready | vote <done|not_done>
+//!             | operator-refund-entry <escrow_hex>
 //!   participant sol-sign <keypair.json> <message-file>
 //!   participant sol-address <keypair.json>
 
@@ -78,6 +79,9 @@ fn main() {
                     lot: hex_arg32(&args[6]),
                 },
                 "return-entry" => Action::ReturnEntry {
+                    escrow: hex_arg(&args[6]),
+                },
+                "operator-refund-entry" => Action::OperatorRefundEntry {
                     escrow: hex_arg(&args[6]),
                 },
                 "cancel" => Action::Cancel,
