@@ -54,7 +54,9 @@ pub fn beats(challenger: &Standing, incumbent: &Standing) -> bool {
 
 /// The winner among the accepted lots' standings (as built by `standing`):
 /// a `beats`-fold; the first index wins exact stalemates. Returns the index
-/// into `standings`.
+/// into `standings`. This is the reference whole-slice fold — the oracle the
+/// property tests below check the canister's streaming `beats`-scan against;
+/// the canister itself never calls it (it folds one lot at a time).
 pub fn winner(standings: &[Standing]) -> Option<usize> {
     let mut best: Option<(usize, &Standing)> = None;
     for (i, s) in standings.iter().enumerate() {
