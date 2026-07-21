@@ -25,8 +25,8 @@ pub const VOTING_PERIOD: u64 = 120;
 pub const FACTORY: &str = "83f7ziVs5VeQ8xiDka8zczbfJT4WcxsXQ18cqWwmV5ur";
 pub const FEE_BPS: u16 = 300;
 pub const FEE_WALLET: &str = "3it64t7KXNip1C1BRYNh8ygeKyujWnaQrPSj3hV9TWbE";
-/// Mirrors logic::DEADLINE_MARGIN.
-pub const DEADLINE_MARGIN: u64 = 259_200;
+/// The deadline margin is the logic crate's, not a mirrored literal.
+pub use auction_logic::DEADLINE_MARGIN;
 
 /// Escrow account layout of the two-outcome shape (factory lib.rs):
 /// discriminator ‖ donor ‖ salt ‖ recipient ‖ resolver ‖ gross ‖ deadline ‖
@@ -352,7 +352,6 @@ pub struct Entry {
     pub nonce: u64,
     pub resolver: Vec<u8>,
     pub lot_id: [u8; 32],
-    pub salt: [u8; 32],
     pub escrow: Vec<u8>,
 }
 
@@ -399,7 +398,6 @@ pub fn plant_entry(
         nonce,
         resolver,
         lot_id,
-        salt,
         escrow,
     }
 }

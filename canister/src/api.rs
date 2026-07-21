@@ -183,7 +183,7 @@ async fn register_entry(arg: RegisterEntryArg) -> Result<ByteBuf, String> {
     // though the registration is rejected.
     let register = logic::Action::Register {
         gross: arg.gross,
-        deadline: i64::try_from(arg.deadline).map_err(|_| "escrow deadline too short")?,
+        deadline: i64::try_from(arg.deadline).map_err(|_| "deadline does not fit the chain")?,
     };
     step_and_save(&akey, &mut record, register.clone(), crate::now_seconds())?;
 

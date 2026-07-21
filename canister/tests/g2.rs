@@ -274,11 +274,11 @@ fn registration_rejects_fakes() {
         "escrow salt does not match the declared birth"
     );
 
-    // (f) A settled escrow is spent money, not a entry.
+    // (f) A closed escrow is spent money, not a entry.
     let mut data = honest();
     data[187] = 1;
     plant_account(&s, &escrow, FACTORY, &data);
-    assert_eq!(try_register().unwrap_err(), "escrow already settled");
+    assert_eq!(try_register().unwrap_err(), "escrow already closed");
 
     // After all fakes, the honest account registers.
     plant_account(&s, &escrow, FACTORY, &honest());

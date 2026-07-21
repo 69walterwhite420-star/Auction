@@ -592,8 +592,9 @@ fn finale_scan_chunk(akey: &[u8], record: &mut AuctionRecord, now: u64) -> bool 
     )
     .is_err()
     {
-        // Unreachable from FINALE_DUE; refusing to guess leaves the record
-        // untouched for the next tick.
+        // Unreachable: Finale always steps from FINALE_DUE. Report the scan
+        // finished so it is not re-armed, and leave the record unmutated
+        // rather than guess a verdict.
         return true;
     }
     record.winner_lot = winner.map(|(lot_id, _)| serde_bytes::ByteBuf::from(lot_id));

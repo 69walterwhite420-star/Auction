@@ -6,8 +6,8 @@
 pub const MIN_VOTE_WEIGHT: u128 = 100_000;
 
 /// Opaque wallet bytes on the chain the escrows live on. The canister
-/// normalizes encodings; this crate only compares them.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// normalizes encodings; this crate only compares them for equality.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Voter(pub Vec<u8>);
 
 /// What the voter asserts about the winning condition the recipient claimed done.

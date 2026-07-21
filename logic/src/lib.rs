@@ -24,4 +24,4 @@ pub use auction::{
 };
 pub use finale::{Entry, Standing, beats, standing, winner};
 pub use verdict::{Outcome, verdict};
-pub use vote::{Choice, MIN_VOTE_WEIGHT, Vote, Voter};
+pub use vote::{Choice, Vote, Voter};

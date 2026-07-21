@@ -17,9 +17,9 @@ thread_local! {
 }
 
 #[ic_cdk::update]
-fn set_reputation(chain: String, payer: ByteBuf, recipient: ByteBuf, value: u128) {
+fn set_reputation(chain: String, donor: ByteBuf, recipient: ByteBuf, value: u128) {
     BOOK.with_borrow_mut(|book| {
-        book.insert((chain, payer.into_vec(), recipient.into_vec()), value);
+        book.insert((chain, donor.into_vec(), recipient.into_vec()), value);
     });
 }
 
@@ -29,13 +29,13 @@ fn set_broken(broken: bool) {
 }
 
 #[ic_cdk::query]
-fn get_reputation(chain: String, payer: ByteBuf, recipient: ByteBuf) -> Nat {
+fn get_reputation(chain: String, donor: ByteBuf, recipient: ByteBuf) -> Nat {
     if BROKEN.with_borrow(|cell| *cell) {
         ic_cdk::trap("mock crown-index is down");
     }
     BOOK.with_borrow(|book| {
         Nat::from(
-            book.get(&(chain, payer.into_vec(), recipient.into_vec()))
+            book.get(&(chain, donor.into_vec(), recipient.into_vec()))
                 .copied()
                 .unwrap_or(0),
         )

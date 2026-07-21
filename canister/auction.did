@@ -3,8 +3,7 @@
 // return_entry, cancel_auction, ready, vote, operator_refund_lot,
 // operator_refund_entry, operator_cancel_auction, request_signature} may
 // ever appear as non-query
-// methods; the CI lint fails on anything else. Methods land with their
-// stages (G2-G3).
+// methods; the CI lint fails on anything else.
 
 type Outcome = variant { settle; cancel };
 type State = variant {

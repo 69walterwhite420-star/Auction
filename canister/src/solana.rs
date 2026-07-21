@@ -23,12 +23,12 @@ use crate::ChainSpec;
 /// convention (factory-spec §2.1); the same constant the core's parser pins.
 const ESCROW_ACCOUNT_DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
 
-/// Byte offset of `settled` in the two-outcome Escrow account: discriminator
+/// Byte offset of `closed` in the two-outcome Escrow account: discriminator
 /// 8 ‖ donor 32 ‖ salt 32 ‖ recipient 32 ‖ resolver 32 ‖ gross 8 ‖ deadline 8
-/// ‖ fee_bps 2 ‖ fee_wallet 32 ‖ bump 1 — then settled. Shape-specific: this
+/// ‖ fee_bps 2 ‖ fee_wallet 32 ‖ bump 1 — then closed. Shape-specific: this
 /// is a two-outcome game (game-spec §12); the layout is pinned by the g2
 /// registration fixture.
-const SETTLED_OFFSET: usize = 187;
+const CLOSED_OFFSET: usize = 187;
 
 /// "Default:Mainnet" | "Default:Devnet" | "Custom:<url>" — the same grammar
 /// the core's config speaks. Custom is testnet-only (validate_config).
@@ -74,7 +74,7 @@ fn client(spec: &ChainSpec) -> Result<SolRpcClient<IcRuntime>, String> {
 /// Verifies one declared entry against the finalized chain (game-spec §4):
 /// the account at the derived address exists, is owned by the factory,
 /// carries the escrow discriminator, the declared donor and the recomputed
-/// salt at the convention offsets, and is not settled. Existence at the
+/// salt at the convention offsets, and is not closed. Existence at the
 /// derived address proves the escrow was born by the factory with exactly
 /// these fields and funded in full — an underfunded escrow does not exist
 /// (factory-spec §2.1).
@@ -122,9 +122,9 @@ pub(crate) async fn verify_escrow(
     if data.get(40..72) != Some(&salt[..]) {
         return Err("escrow salt does not match the declared birth".to_string());
     }
-    match data.get(SETTLED_OFFSET) {
+    match data.get(CLOSED_OFFSET) {
         Some(0) => Ok(()),
-        Some(_) => Err("escrow already settled".to_string()),
+        Some(_) => Err("escrow already closed".to_string()),
         None => Err("escrow account is too short".to_string()),
     }
 }
